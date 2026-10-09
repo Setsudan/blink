@@ -1,13 +1,32 @@
 [package]
 name = "blink"
-version = "0.1.0"
+version = "0.0.3"
 edition = "2024"
+description = "Windows tray utility that nudges you to rest your eyes (20/20/20)."
+license = "MIT"
 
 [dependencies]
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", default-features = false, features = ["svg"] }
 raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tray-icon = "0.26"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
 
 [[bin]]
 name = "blink"
-path = "main.rs"
+path = "src/main.rs"
