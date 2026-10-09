@@ -1,6 +1,6 @@
 [package]
 name = "blink"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 description = "Windows tray utility that nudges you to rest your eyes (20/20/20)."
 license = "MIT"
