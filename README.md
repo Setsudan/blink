@@ -109,10 +109,10 @@ assets/
 
 ### Architecture
 
-- **domain** — pure Rust break policy and phase machine; unit-tested without egui
-- **config** / **user_config** — compile-time defaults and persisted timings
-- **platform** — OS-specific window chrome, monitor bounds, quiet-mode check
-- **viewport** — maps session state to viewport size / position / passthrough
-- **ui** — paints from an immutable session view; emits `UiAction` (e.g. snooze)
-- **tray** — tray icon, tooltip, and menu actions
-- **app** — advances time, session, and layout, then applies UI / tray actions
+- **domain**  pure Rust break policy and phase machine; unit-tested without egui
+- **config** / **user_config**  compile-time defaults and persisted timings
+- **platform**  OS-specific window chrome, monitor bounds, quiet-mode check
+- **viewport**  maps session state to viewport size / position / passthrough
+- **ui**  paints from an immutable session view; emits `UiAction` (e.g. snooze)
+- **tray**  tray icon, tooltip, and menu actions
+- **app**  advances time, session, and layout, then applies UI / tray actions

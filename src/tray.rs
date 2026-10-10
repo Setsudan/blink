@@ -18,6 +18,7 @@ pub struct AppTray {
     quit_id: MenuId,
     pause_item: MenuItem,
     paused: bool,
+    last_tooltip: String,
 }
 
 impl AppTray {
@@ -31,9 +32,10 @@ impl AppTray {
         menu.append(&pause)?;
         menu.append(&quit)?;
 
+        let tooltip = "Blink  eye break reminder".to_owned();
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("Blink — eye break reminder")
+            .with_tooltip(&tooltip)
             .with_icon(icon)
             .build()?;
 
@@ -44,6 +46,7 @@ impl AppTray {
             quit_id: quit.id().clone(),
             pause_item: pause,
             paused: false,
+            last_tooltip: tooltip,
         })
     }
 
@@ -73,8 +76,13 @@ impl AppTray {
         self.pause_item.set_text(label);
     }
 
-    pub fn set_tooltip(&self, text: &str) {
-        let _ = self.tray.set_tooltip(Some(text));
+    pub fn set_tooltip(&mut self, text: &str) {
+        if self.last_tooltip == text {
+            return;
+        }
+        if self.tray.set_tooltip(Some(text)).is_ok() {
+            self.last_tooltip = text.to_owned();
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, TRUE};
+use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMSBT_NONE,
@@ -9,8 +9,8 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetCursorPos, GetWindowRect, IsIconic, IsWindowVisible, SetWindowPos,
-    SWP_NOACTIVATE, SWP_NOZORDER,
+    GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible,
+    SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -100,66 +100,71 @@ pub fn cursor_monitor_bounds() -> Option<MonitorBounds> {
     }
 }
 
-/// True when some other visible top-level window covers the monitor (fullscreen / exclusive).
+/// True when the foreground window (not Blink / not shell chrome) covers the monitor.
+/// Foreground-only avoids EnumWindows false positives that deferred breaks forever.
 pub fn other_fullscreen_window_on_monitor(
     monitor: MonitorBounds,
     self_hwnd: Option<isize>,
 ) -> bool {
-    struct EnumState {
-        monitor: MonitorBounds,
-        self_hwnd: Option<HWND>,
-        found: bool,
-    }
-
-    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let state = unsafe { &mut *(lparam as *mut EnumState) };
-        if state.found {
-            return TRUE;
-        }
-        if let Some(self_hwnd) = state.self_hwnd {
-            if hwnd == self_hwnd {
-                return TRUE;
-            }
-        }
-        unsafe {
-            if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
-                return TRUE;
-            }
-            let mut rect = RECT {
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-            };
-            if GetWindowRect(hwnd, &mut rect) == 0 {
-                return TRUE;
-            }
-            let mon_rect = state.monitor.as_rect();
-            let covers = rect.left <= mon_rect.left
-                && rect.top <= mon_rect.top
-                && rect.right >= mon_rect.right
-                && rect.bottom >= mon_rect.bottom;
-            if !covers {
-                return TRUE;
-            }
-            let win_mon = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
-            let target_mon = MonitorFromRect(&mon_rect, MONITOR_DEFAULTTONEAREST);
-            if !win_mon.is_null() && win_mon == target_mon {
-                state.found = true;
-            }
-        }
-        TRUE
-    }
-
-    let mut state = EnumState {
-        monitor,
-        self_hwnd: self_hwnd.map(|h| h as HWND),
-        found: false,
-    };
     unsafe {
-        let _ = EnumWindows(Some(callback), &mut state as *mut EnumState as LPARAM);
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return false;
+        }
+        if let Some(self_hwnd) = self_hwnd {
+            if hwnd == self_hwnd as HWND {
+                return false;
+            }
+        }
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            return false;
+        }
+        if is_shell_chrome(hwnd) {
+            return false;
+        }
+
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return false;
+        }
+
+        let mon_rect = monitor.as_rect();
+        // Allow a few pixels of slop for borders / exclusive mode quirks.
+        const SLACK: i32 = 8;
+        let covers = rect.left <= mon_rect.left + SLACK
+            && rect.top <= mon_rect.top + SLACK
+            && rect.right >= mon_rect.right - SLACK
+            && rect.bottom >= mon_rect.bottom - SLACK;
+        if !covers {
+            return false;
+        }
+
+        let win_mon = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+        let target_mon = MonitorFromRect(&mon_rect, MONITOR_DEFAULTTONEAREST);
+        !win_mon.is_null() && win_mon == target_mon
     }
-    state.found
+}
+
+unsafe fn is_shell_chrome(hwnd: HWND) -> bool {
+    let mut class = [0u16; 64];
+    let len = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
+    if len <= 0 {
+        return false;
+    }
+    let class = String::from_utf16_lossy(&class[..len as usize]);
+    matches!(
+        class.as_str(),
+        "Progman"
+            | "WorkerW"
+            | "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "NotifyIconOverflowWindow"
+    )
 }
 
 pub fn hwnd_isize_from_frame(frame: &eframe::Frame) -> Option<isize> {

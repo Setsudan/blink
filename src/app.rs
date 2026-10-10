@@ -3,7 +3,7 @@ use std::time::Duration;
 use eframe::egui;
 
 use crate::assets::IconSet;
-use crate::config::{IDLE_REPAINT_CAP_SECS, QUIET_DEFER_SECS};
+use crate::config::QUIET_DEFER_SECS;
 use crate::domain::BreakSession;
 use crate::platform::{
     cursor_monitor_bounds, hwnd_isize_from_frame, other_fullscreen_window_on_monitor,
@@ -23,6 +23,18 @@ pub struct EyeSaverApp {
 
 impl EyeSaverApp {
     pub fn new(ctx: &egui::Context) -> Self {
+        // Off-screen 1x1 windows lose winit WaitUntil wakeups; keep a cheap heartbeat.
+        let wake_ctx = ctx.clone();
+        std::thread::Builder::new()
+            .name("blink-wake".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    wake_ctx.request_repaint();
+                }
+            })
+            .ok();
+
         let config = UserConfig::load_or_create();
         let tray = match AppTray::new() {
             Ok(tray) => Some(tray),
@@ -67,23 +79,23 @@ impl EyeSaverApp {
         quit
     }
 
-    fn update_tray_tooltip(&self) {
-        let Some(tray) = self.tray.as_ref() else {
+    fn update_tray_tooltip(&mut self) {
+        let Some(tray) = self.tray.as_mut() else {
             return;
         };
         let snoozes = self.session.snoozes_remaining();
         let text = if self.session.is_paused() {
-            format!("Blink — paused · {snoozes} snoozes left")
+            format!("Blink  paused · {snoozes} snoozes left")
         } else if self.session.is_active() {
-            format!("Blink — on break · {snoozes} snoozes left")
+            format!("Blink  on break · {snoozes} snoozes left")
         } else {
             let secs = self.session.secs_until_break().ceil() as u64;
             let mins = secs / 60;
             let rem = secs % 60;
             if mins >= 1 {
-                format!("Blink — break in {mins}m · {snoozes} snoozes left")
+                format!("Blink  break in {mins}m {rem:02}s · {snoozes} snoozes left")
             } else {
-                format!("Blink — break in {rem}s · {snoozes} snoozes left")
+                format!("Blink  break in {rem}s · {snoozes} snoozes left")
             }
         };
         tray.set_tooltip(&text);
@@ -130,15 +142,9 @@ impl eframe::App for EyeSaverApp {
         self.layout.sync(&self.session, ctx, frame);
         self.update_tray_tooltip();
 
+        // Heartbeat thread already wakes us; still request continuous frames during breaks.
         if self.session.is_active() || self.layout.break_layout() {
             ctx.request_repaint();
-        } else {
-            let wait = self
-                .session
-                .secs_until_break()
-                .min(IDLE_REPAINT_CAP_SECS)
-                .max(0.05);
-            ctx.request_repaint_after(Duration::from_secs_f64(wait));
         }
     }
 

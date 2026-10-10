@@ -1,4 +1,4 @@
-/// Tiny invisible idle window — keeps the eframe loop alive without a visible bar.
+/// Tiny invisible idle window  keeps the eframe loop alive without a visible bar.
 /// (Hiding with Visible(false) stalls viewport commands on Windows.)
 pub const IDLE_WINDOW_SIZE: [f32; 2] = [1.0, 1.0];
 pub const BREAK_ICON_SIZE: f32 = 72.0;
@@ -34,5 +34,3 @@ pub const RESTORE_OK_FRAMES_NEEDED: u32 = 3;
 pub const FADE_OUT_SHRINK_RATIO: f64 = 0.2;
 /// When another app is fullscreen, defer the next break by this long.
 pub const QUIET_DEFER_SECS: f64 = 30.0;
-/// Cap idle wakeups so tray tooltip stays reasonably fresh.
-pub const IDLE_REPAINT_CAP_SECS: f64 = 1.0;
