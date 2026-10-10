@@ -8,8 +8,8 @@ use windows_sys::Win32::Graphics::Dwm::{
 };
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, EnumDisplayMonitors, FillRect,
-    GetMonitorInfoW, GetStockObject, MonitorFromPoint, MonitorFromRect, BLACK_BRUSH, HDC,
-    HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
+    GetMonitorInfoW, GetStockObject, InvalidateRect, MonitorFromPoint, MonitorFromRect,
+    UpdateWindow, BLACK_BRUSH, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
@@ -67,6 +67,17 @@ impl MonitorBounds {
             && (self.width - other.width).abs() < SLACK
             && (self.height - other.height).abs() < SLACK
     }
+
+    /// Same display via Win32 HMONITOR identity (more reliable than float bounds).
+    pub fn same_monitor(self, other: Self) -> bool {
+        unsafe {
+            let a = self.as_rect();
+            let b = other.as_rect();
+            let ma = MonitorFromRect(&a, MONITOR_DEFAULTTONEAREST);
+            let mb = MonitorFromRect(&b, MONITOR_DEFAULTTONEAREST);
+            !ma.is_null() && ma == mb
+        }
+    }
 }
 
 pub fn suppress_window_chrome(cc: &eframe::CreationContext<'_>) {
@@ -106,18 +117,28 @@ pub fn force_window_bounds(frame: &eframe::Frame, x: f32, y: f32, w: f32, h: f32
     };
     let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as f32;
     let scale = dpi / 96.0;
-    let x = (x * scale).round() as i32;
-    let y = (y * scale).round() as i32;
-    let cx = (w * scale).round() as i32;
-    let cy = (h * scale).round() as i32;
+    force_window_bounds_physical(
+        frame,
+        x * scale,
+        y * scale,
+        w * scale,
+        h * scale,
+    );
+}
+
+/// `SetWindowPos` with virtual-screen physical pixels (no DPI rescale).
+pub fn force_window_bounds_physical(frame: &eframe::Frame, x: f32, y: f32, w: f32, h: f32) {
+    let Some(hwnd) = hwnd_from_frame(frame) else {
+        return;
+    };
     unsafe {
         let _ = SetWindowPos(
             hwnd,
             std::ptr::null_mut(),
-            x,
-            y,
-            cx,
-            cy,
+            x.round() as i32,
+            y.round() as i32,
+            w.round() as i32,
+            h.round() as i32,
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
@@ -218,12 +239,26 @@ pub fn other_fullscreen_window_on_monitor(
 
 /// Layered fullscreen dim windows for every monitor except the active break display.
 pub struct SecondaryDimOverlays {
-    hwnds: Vec<HWND>,
+    windows: Vec<DimWindow>,
+    /// True after a successful `show` for this break (even if no secondary monitors).
+    armed: bool,
+}
+
+struct DimWindow {
+    hwnd: HWND,
+    bounds: MonitorBounds,
 }
 
 impl SecondaryDimOverlays {
     pub fn new() -> Self {
-        Self { hwnds: Vec::new() }
+        Self {
+            windows: Vec::new(),
+            armed: false,
+        }
+    }
+
+    pub fn is_armed(&self) -> bool {
+        self.armed
     }
 
     pub fn show(&mut self, exclude: MonitorBounds, alpha: f32) {
@@ -232,31 +267,49 @@ impl SecondaryDimOverlays {
 
         let alpha_byte = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
         for bounds in enumerate_monitors() {
-            if bounds.approx_eq(exclude) {
+            if bounds.same_monitor(exclude) || bounds.approx_eq(exclude) {
                 continue;
             }
             if let Some(hwnd) = create_dim_window(bounds, alpha_byte) {
-                self.hwnds.push(hwnd);
+                self.windows.push(DimWindow { hwnd, bounds });
             }
         }
+        self.armed = true;
     }
 
     pub fn set_alpha(&self, alpha: f32) {
         let alpha_byte = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
-        for &hwnd in &self.hwnds {
+        for window in &self.windows {
+            let rect = window.bounds.as_rect();
             unsafe {
-                let _ = SetLayeredWindowAttributes(hwnd, 0 as COLORREF, alpha_byte, LWA_ALPHA);
+                let _ = SetLayeredWindowAttributes(
+                    window.hwnd,
+                    0 as COLORREF,
+                    alpha_byte,
+                    LWA_ALPHA,
+                );
+                // Re-assert topmost + bounds each frame so secondary dims stay above apps.
+                let _ = SetWindowPos(
+                    window.hwnd,
+                    HWND_TOPMOST,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
             }
         }
     }
 
     pub fn clear(&mut self) {
-        for hwnd in self.hwnds.drain(..) {
+        for window in self.windows.drain(..) {
             unsafe {
-                let _ = ShowWindow(hwnd, SW_HIDE);
-                let _ = DestroyWindow(hwnd);
+                let _ = ShowWindow(window.hwnd, SW_HIDE);
+                let _ = DestroyWindow(window.hwnd);
             }
         }
+        self.armed = false;
     }
 }
 
@@ -336,6 +389,8 @@ fn create_dim_window(bounds: MonitorBounds, alpha_byte: u8) -> Option<HWND> {
             rect.bottom - rect.top,
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
+        let _ = InvalidateRect(hwnd, std::ptr::null(), 1);
+        let _ = UpdateWindow(hwnd);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
     Some(hwnd)

@@ -3,13 +3,15 @@ use std::time::Duration;
 use eframe::egui;
 
 use crate::assets::IconSet;
-use crate::audio::ChimePlayer;
+use crate::audio::{ChimeKind, ChimePlayer};
 use crate::config::QUIET_DEFER_SECS;
 use crate::domain::{BreakEvent, BreakSession};
 use crate::platform::{
-    cursor_monitor_bounds, hwnd_isize_from_frame, other_fullscreen_window_on_monitor,
-    seconds_since_last_input, SecondaryDimOverlays,
+    autostart_sync, cursor_monitor_bounds, hwnd_isize_from_frame,
+    other_fullscreen_window_on_monitor, seconds_since_last_input, settings_dialog,
+    SecondaryDimOverlays,
 };
+use crate::logutil;
 use crate::tray::{AppTray, TrayAction};
 use crate::ui::{paint_break_overlay, UiAction};
 use crate::user_config::UserConfig;
@@ -28,26 +30,32 @@ pub struct EyeSaverApp {
 impl EyeSaverApp {
     pub fn new(ctx: &egui::Context) -> Self {
         // Off-screen 1x1 windows lose winit WaitUntil wakeups; keep a cheap heartbeat.
+        // Stops when logutil marks the process dead so a crash cannot leave a zombie.
         let wake_ctx = ctx.clone();
         std::thread::Builder::new()
             .name("blink-wake".into())
             .spawn(move || {
-                loop {
+                while logutil::alive() {
                     std::thread::sleep(Duration::from_millis(500));
+                    if !logutil::alive() {
+                        break;
+                    }
                     wake_ctx.request_repaint();
                 }
             })
             .ok();
 
         let config = UserConfig::load_or_create();
+        autostart_sync(config.launch_on_startup);
         let sound_enabled = config.sound_enabled;
         let tray = match AppTray::new(sound_enabled) {
             Ok(tray) => Some(tray),
             Err(err) => {
-                eprintln!("failed to create tray icon: {err}");
+                logutil::log(&format!("failed to create tray icon: {err}"));
                 None
             }
         };
+        logutil::log("app: ready");
 
         Self {
             time: 0.0,
@@ -57,6 +65,29 @@ impl EyeSaverApp {
             tray,
             dim_overlays: SecondaryDimOverlays::new(),
             chime: ChimePlayer::new(),
+        }
+    }
+
+    fn open_settings(&mut self) {
+        if self.session.is_active() {
+            logutil::log("settings: ignored, break active");
+            return;
+        }
+        logutil::log("settings: tray OpenSettings");
+        settings_dialog::open(self.session.config());
+    }
+
+    fn apply_settings_result(&mut self) {
+        match settings_dialog::take_result() {
+            Some(settings_dialog::SettingsDialogResult::Save(cfg)) => {
+                autostart_sync(cfg.launch_on_startup);
+                self.session.apply_config(cfg);
+                self.session.config().save_user();
+                if let Some(tray) = self.tray.as_mut() {
+                    tray.set_sound_enabled(self.session.config().sound_enabled);
+                }
+            }
+            Some(settings_dialog::SettingsDialogResult::Cancelled) | None => {}
         }
     }
 
@@ -70,8 +101,11 @@ impl EyeSaverApp {
             match action {
                 TrayAction::Quit => quit = true,
                 TrayAction::BreakNow => {
+                    if settings_dialog::is_open() {
+                        settings_dialog::close();
+                    }
                     if let Some(BreakEvent::Started) = self.session.start_break_now() {
-                        self.play_chime_if_enabled();
+                        self.play_chime_if_enabled(ChimeKind::Blink);
                     }
                 }
                 TrayAction::TogglePause => {
@@ -86,6 +120,7 @@ impl EyeSaverApp {
                     self.session.set_sound_enabled(enabled);
                     self.session.config().save_user();
                 }
+                TrayAction::OpenSettings => self.open_settings(),
             }
         }
         if let Some(tray) = self.tray.as_mut() {
@@ -98,15 +133,16 @@ impl EyeSaverApp {
         quit
     }
 
-    fn play_chime_if_enabled(&mut self) {
+    fn play_chime_if_enabled(&mut self, kind: ChimeKind) {
         if self.session.config().sound_enabled {
-            self.chime.play();
+            self.chime.play(kind);
         }
     }
 
     fn handle_break_event(&mut self, event: BreakEvent) {
         match event {
-            BreakEvent::Started | BreakEvent::Completed => self.play_chime_if_enabled(),
+            BreakEvent::Started => self.play_chime_if_enabled(ChimeKind::Blink),
+            BreakEvent::Completed => self.play_chime_if_enabled(ChimeKind::Thanks),
         }
     }
 
@@ -146,12 +182,13 @@ impl EyeSaverApp {
 
     fn sync_dim_overlays(&mut self, was_break_layout: bool) {
         let is_break_layout = self.layout.break_layout();
-        if is_break_layout && !was_break_layout {
-            if let Some(exclude) = self.layout.break_monitor_physical() {
+        if is_break_layout {
+            // Arm once per break; retry while unarmed if physical exclude arrives late.
+            if !self.dim_overlays.is_armed()
+                && let Some(exclude) = self.layout.break_monitor_physical()
+            {
                 self.dim_overlays.show(exclude, self.session.alpha());
             }
-        }
-        if is_break_layout {
             self.dim_overlays.set_alpha(self.session.alpha());
         }
         if was_break_layout && !is_break_layout {
@@ -174,6 +211,10 @@ impl EyeSaverApp {
             }
         }
 
+        if settings_dialog::is_open() {
+            settings_dialog::close();
+        }
+
         if let Some(event) = self.session.begin_due_break() {
             self.handle_break_event(event);
         }
@@ -189,6 +230,8 @@ impl eframe::App for EyeSaverApp {
         if self.apply_tray_actions(ctx) {
             return;
         }
+
+        self.apply_settings_result();
 
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if escape && self.session.is_active() {

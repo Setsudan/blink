@@ -6,6 +6,7 @@ mod audio;
 mod config;
 mod domain;
 mod easing;
+mod logutil;
 mod platform;
 mod tray;
 mod ui;
@@ -19,6 +20,9 @@ use crate::config::IDLE_WINDOW_SIZE;
 use crate::platform::suppress_window_chrome;
 
 fn main() -> eframe::Result {
+    logutil::init();
+    logutil::log("main: starting eframe");
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(false)
@@ -37,6 +41,7 @@ fn main() -> eframe::Result {
         "Blink",
         options,
         Box::new(|cc| {
+            logutil::log("main: creating EyeSaverApp");
             suppress_window_chrome(cc);
             Ok(Box::new(EyeSaverApp::new(&cc.egui_ctx)))
         }),

@@ -27,6 +27,8 @@ pub struct UserConfig {
     pub sound_enabled: bool,
     #[serde(default = "default_afk_reset_secs")]
     pub afk_reset_secs: f64,
+    #[serde(default)]
+    pub launch_on_startup: bool,
 }
 
 impl Default for UserConfig {
@@ -40,6 +42,7 @@ impl Default for UserConfig {
             fade_out_secs: FADE_OUT_SECS,
             sound_enabled: true,
             afk_reset_secs: AFK_RESET_SECS,
+            launch_on_startup: false,
         }
     }
 }
@@ -77,7 +80,7 @@ impl UserConfig {
         }
     }
 
-    fn sanitized(mut self) -> Self {
+    pub fn sanitized(mut self) -> Self {
         self.work_secs = self.work_secs.max(1.0);
         self.break_secs = self.break_secs.max(1.0);
         self.snooze_secs = self.snooze_secs.max(1.0);

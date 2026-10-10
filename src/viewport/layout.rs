@@ -2,7 +2,9 @@ use eframe::egui;
 
 use crate::config::{FADE_OUT_SHRINK_RATIO, IDLE_SIZE_SLACK, IDLE_WINDOW_SIZE, RESTORE_OK_FRAMES_NEEDED};
 use crate::domain::{BreakPhase, BreakSession};
-use crate::platform::{cursor_monitor_bounds, force_window_bounds, MonitorBounds};
+use crate::platform::{
+    cursor_monitor_bounds, force_window_bounds, force_window_bounds_physical, MonitorBounds,
+};
 
 pub struct LayoutState {
     /// True while the native window is (or should be) in fullscreen break layout.
@@ -48,7 +50,7 @@ impl LayoutState {
                     self.break_monitor_physical = None;
                 }
                 if let Some(bounds) = self.break_monitor {
-                    apply_break_bounds(ctx, frame, bounds);
+                    apply_break_bounds(ctx, frame, bounds, self.break_monitor_physical);
                     self.break_layout = true;
                 }
             }
@@ -143,9 +145,14 @@ fn window_is_idle_sized(ctx: &egui::Context) -> bool {
     .unwrap_or(false)
 }
 
-fn apply_break_bounds(ctx: &egui::Context, frame: &eframe::Frame, bounds: MonitorBounds) {
-    let size = egui::vec2(bounds.width, bounds.height);
-    let pos = egui::pos2(bounds.x, bounds.y);
+fn apply_break_bounds(
+    ctx: &egui::Context,
+    frame: &eframe::Frame,
+    logical: MonitorBounds,
+    physical: Option<MonitorBounds>,
+) {
+    let size = egui::vec2(logical.width, logical.height);
+    let pos = egui::pos2(logical.x, logical.y);
 
     ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(false));
     ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
@@ -155,18 +162,30 @@ fn apply_break_bounds(ctx: &egui::Context, frame: &eframe::Frame, bounds: Monito
     ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-    force_window_bounds(frame, bounds.x, bounds.y, bounds.width, bounds.height);
+    // Prefer physical pixels from Win32 so mixed-DPI secondaries land correctly.
+    if let Some(phys) = physical {
+        force_window_bounds_physical(frame, phys.x, phys.y, phys.width, phys.height);
+    } else {
+        force_window_bounds(
+            frame,
+            logical.x,
+            logical.y,
+            logical.width,
+            logical.height,
+        );
+    }
 }
 
 fn apply_idle_bounds(ctx: &egui::Context, frame: &eframe::Frame) {
     let size = egui::vec2(IDLE_WINDOW_SIZE[0], IDLE_WINDOW_SIZE[1]);
 
+    // Lower Min before Max when shrinking from a larger break layout.
     ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
     ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
         egui::WindowLevel::Normal,
     ));
-    ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(size));
+    ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32.0, -32.0)));
     force_window_bounds(

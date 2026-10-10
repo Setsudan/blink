@@ -1,6 +1,6 @@
 [package]
 name = "blink"
-version = "0.0.4"
+version = "0.1.0"
 edition = "2024"
 description = "Windows tray utility that nudges you to rest your eyes (20/20/20)."
 license = "MIT"
@@ -9,7 +9,7 @@ license = "MIT"
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", default-features = false, features = ["svg"] }
 raw-window-handle = "0.6"
-rodio = { version = "0.20", default-features = false, features = ["mp3"] }
+rodio = { version = "0.20", default-features = false, features = ["wav"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tray-icon = "0.26"
@@ -19,17 +19,27 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Kernel",
     "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"
 
 [[bin]]
 name = "blink"

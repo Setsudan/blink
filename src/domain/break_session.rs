@@ -56,6 +56,11 @@ impl BreakSession {
         self.config.sound_enabled = enabled;
     }
 
+    /// Replace config without resetting the current idle countdown.
+    pub fn apply_config(&mut self, config: UserConfig) {
+        self.config = config.sanitized();
+    }
+
     pub fn phase(&self) -> BreakPhase {
         self.phase
     }

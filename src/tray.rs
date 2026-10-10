@@ -9,6 +9,7 @@ pub enum TrayAction {
     BreakNow,
     TogglePause,
     ToggleSound,
+    OpenSettings,
     Quit,
 }
 
@@ -17,6 +18,7 @@ pub struct AppTray {
     break_now_id: MenuId,
     pause_id: MenuId,
     sound_id: MenuId,
+    settings_id: MenuId,
     quit_id: MenuId,
     pause_item: MenuItem,
     sound_item: CheckMenuItem,
@@ -31,10 +33,12 @@ impl AppTray {
         let break_now = MenuItem::new("Break now", true, None);
         let pause = MenuItem::new("Pause", true, None);
         let sound = CheckMenuItem::new("Sound", true, sound_enabled, None);
+        let settings = MenuItem::new("Settings", true, None);
         let quit = MenuItem::new("Quit Blink", true, None);
         menu.append(&break_now)?;
         menu.append(&pause)?;
         menu.append(&sound)?;
+        menu.append(&settings)?;
         menu.append(&quit)?;
 
         let tooltip = "Blink  eye break reminder".to_owned();
@@ -49,6 +53,7 @@ impl AppTray {
             break_now_id: break_now.id().clone(),
             pause_id: pause.id().clone(),
             sound_id: sound.id().clone(),
+            settings_id: settings.id().clone(),
             quit_id: quit.id().clone(),
             pause_item: pause,
             sound_item: sound,
@@ -69,6 +74,8 @@ impl AppTray {
                     Some(TrayAction::TogglePause)
                 } else if event.id == self.sound_id {
                     Some(TrayAction::ToggleSound)
+                } else if event.id == self.settings_id {
+                    Some(TrayAction::OpenSettings)
                 } else {
                     None
                 }

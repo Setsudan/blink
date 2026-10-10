@@ -4,10 +4,19 @@ use std::thread;
 
 use rodio::{Decoder, OutputStream, Sink};
 
-const SOFT_MP3: &[u8] = include_bytes!("../assets/soft.mp3");
+const BLINK_WAV: &[u8] = include_bytes!("../assets/blink.wav");
+const THANKS_WAV: &[u8] = include_bytes!("../assets/thanks.wav");
+
+#[derive(Clone, Copy)]
+pub enum ChimeKind {
+    /// Played when the break overlay appears.
+    Blink,
+    /// Played when the break timer finishes.
+    Thanks,
+}
 
 enum AudioCmd {
-    Play,
+    Play(ChimeKind),
 }
 
 /// Fire-and-forget chime player. Spawns one audio thread on first use.
@@ -20,14 +29,14 @@ impl ChimePlayer {
         Self { tx: None }
     }
 
-    pub fn play(&mut self) {
+    pub fn play(&mut self, kind: ChimeKind) {
         if self.ensure_worker().is_none() {
             return;
         }
         let Some(tx) = self.tx.as_ref() else {
             return;
         };
-        let _ = tx.send(AudioCmd::Play);
+        let _ = tx.send(AudioCmd::Play(kind));
     }
 
     fn ensure_worker(&mut self) -> Option<()> {
@@ -57,6 +66,13 @@ impl Default for ChimePlayer {
     }
 }
 
+fn audio_bytes(kind: ChimeKind) -> &'static [u8] {
+    match kind {
+        ChimeKind::Blink => BLINK_WAV,
+        ChimeKind::Thanks => THANKS_WAV,
+    }
+}
+
 fn audio_thread(rx: mpsc::Receiver<AudioCmd>) {
     let Ok((_stream, handle)) = OutputStream::try_default() else {
         eprintln!("blink: no audio output device");
@@ -65,10 +81,10 @@ fn audio_thread(rx: mpsc::Receiver<AudioCmd>) {
         return;
     };
 
-    while let Ok(AudioCmd::Play) = rx.recv() {
-        let cursor = Cursor::new(SOFT_MP3);
+    while let Ok(AudioCmd::Play(kind)) = rx.recv() {
+        let cursor = Cursor::new(audio_bytes(kind));
         let Ok(source) = Decoder::new(cursor) else {
-            eprintln!("blink: failed to decode soft.mp3");
+            eprintln!("blink: failed to decode wav");
             continue;
         };
         let Ok(sink) = Sink::try_new(&handle) else {

@@ -7,7 +7,7 @@ Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons�
 ## Features
 
 - No always-visible window between breaks
-- System tray icon with **Break now**, **Pause** / **Resume**, **Sound**, and **Quit Blink**
+- System tray icon with **Break now**, **Pause** / **Resume**, **Sound**, **Settings**, and **Quit Blink**
 - Tooltip shows time until the next break and snoozes left
 - Fullscreen break overlay on the monitor under the cursor; secondary monitors are dimmed
 - Optional soft chime when a break starts and when the hold finishes successfully
@@ -17,7 +17,9 @@ Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons�
 - Quiet mode: defers the break while another app is fullscreen on that monitor
 - Wall-clock work intervals (survives sleep / lock better than frame deltas)
 - Win32 chrome suppression so the overlay stays borderless and flat
-- Timings configurable via `%APPDATA%\Blink\config.json`
+- Settings window (tray **Settings**) for timings, sound, and launch on startup — separate Win32 dialog so the tray timer keeps running
+- Optional launch on Windows startup via `HKCU\...\Run`
+- Timings also editable in `%APPDATA%\Blink\config.json`
 
 ## Requirements
 
@@ -82,11 +84,16 @@ On first run Blink writes `%APPDATA%\Blink\config.json`:
   "fade_in_secs": 2.8,
   "fade_out_secs": 1.4,
   "sound_enabled": true,
-  "afk_reset_secs": 180.0
+  "afk_reset_secs": 180.0,
+  "launch_on_startup": false
 }
 ```
 
-Edit and restart Blink to apply timing changes. The tray **Sound** checkbox toggles `sound_enabled` and saves immediately.
+Prefer the tray **Settings** window to change timings, sound, and launch-on-startup; **Save** applies immediately (no restart). The current work countdown is left alone; new work/snooze intervals apply on the next idle schedule. The tray **Sound** checkbox still toggles `sound_enabled` and saves immediately. `launch_on_startup` registers or removes `Blink` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+
+### Logs / crashes
+
+Blink appends diagnostics to `%APPDATA%\Blink\blink.log`. Panics and unhandled Windows exceptions are written there and the process exits (so it should not linger in Task Manager).
 
 ## Project layout
 
@@ -103,6 +110,8 @@ src/
     break_session.rs      # pure break FSM (wall-clock idle; no egui)
   platform/
     windows_chrome.rs     # DWM + monitors + quiet fullscreen + AFK + dim overlays
+    autostart.rs          # HKCU Run launch-on-startup
+    settings_dialog.rs    # Win32 settings window (separate HWND)
   assets.rs               # SVG icon loading
   viewport/
     layout.rs             # fullscreen ↔ idle sync
@@ -119,9 +128,9 @@ assets/
 
 - **domain**  pure Rust break policy and phase machine; unit-tested without egui
 - **config** / **user_config**  compile-time defaults and persisted timings
-- **platform**  OS-specific window chrome, monitors, quiet mode, AFK, secondary dim HWNDS
+- **platform**  OS-specific window chrome, monitors, quiet mode, AFK, secondary dim HWNDS, autostart
 - **viewport**  maps session state to viewport size / position / passthrough
-- **ui**  paints from an immutable session view; emits `UiAction` (e.g. snooze)
+- **ui**  paints from an immutable session view; emits `UiAction` (e.g. snooze); settings form
 - **audio**  optional chime on break start / successful hold finish
 - **tray**  tray icon, tooltip, and menu actions
-- **app**  advances time, session, and layout, then applies UI / tray actions
+- **app**  advances time, session, and layout, then applies UI / tray / settings actions
