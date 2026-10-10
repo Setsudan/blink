@@ -11,6 +11,8 @@ pub struct LayoutState {
     restore_ok_frames: u32,
     /// Monitor used for the current break overlay (logical pixels).
     break_monitor: Option<MonitorBounds>,
+    /// Same monitor in physical pixels for Win32 dim-window exclusion.
+    break_monitor_physical: Option<MonitorBounds>,
 }
 
 impl LayoutState {
@@ -19,6 +21,7 @@ impl LayoutState {
             break_layout: false,
             restore_ok_frames: 0,
             break_monitor: None,
+            break_monitor_physical: None,
         }
     }
 
@@ -26,8 +29,8 @@ impl LayoutState {
         self.break_layout
     }
 
-    pub fn break_monitor(&self) -> Option<MonitorBounds> {
-        self.break_monitor
+    pub fn break_monitor_physical(&self) -> Option<MonitorBounds> {
+        self.break_monitor_physical
     }
 
     pub fn sync(&mut self, session: &BreakSession, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -37,7 +40,13 @@ impl LayoutState {
         if session.is_active() && !shrink_during_fade {
             self.restore_ok_frames = 0;
             if !self.break_layout {
-                self.break_monitor = resolve_break_monitor(ctx);
+                if let Some(resolved) = resolve_break_monitor(ctx) {
+                    self.break_monitor = Some(resolved.logical);
+                    self.break_monitor_physical = resolved.physical;
+                } else {
+                    self.break_monitor = None;
+                    self.break_monitor_physical = None;
+                }
                 if let Some(bounds) = self.break_monitor {
                     apply_break_bounds(ctx, frame, bounds);
                     self.break_layout = true;
@@ -69,6 +78,7 @@ impl LayoutState {
             self.break_layout = false;
             self.restore_ok_frames = 0;
             self.break_monitor = None;
+            self.break_monitor_physical = None;
         }
     }
 }
@@ -79,20 +89,32 @@ impl Default for LayoutState {
     }
 }
 
-fn resolve_break_monitor(ctx: &egui::Context) -> Option<MonitorBounds> {
-    if let Some(bounds) = cursor_monitor_bounds() {
-        return Some(logical_from_physical(ctx, bounds));
+struct ResolvedMonitor {
+    logical: MonitorBounds,
+    /// Present when resolved from Win32 cursor monitor (physical coords).
+    physical: Option<MonitorBounds>,
+}
+
+fn resolve_break_monitor(ctx: &egui::Context) -> Option<ResolvedMonitor> {
+    if let Some(physical) = cursor_monitor_bounds() {
+        return Some(ResolvedMonitor {
+            logical: logical_from_physical(ctx, physical),
+            physical: Some(physical),
+        });
     }
 
     let monitor = ctx.input(|i| i.viewport().monitor_size)?;
     if monitor.x <= 1.0 || monitor.y <= 1.0 {
         return None;
     }
-    Some(MonitorBounds {
-        x: 0.0,
-        y: 0.0,
-        width: monitor.x,
-        height: monitor.y,
+    Some(ResolvedMonitor {
+        logical: MonitorBounds {
+            x: 0.0,
+            y: 0.0,
+            width: monitor.x,
+            height: monitor.y,
+        },
+        physical: None,
     })
 }
 

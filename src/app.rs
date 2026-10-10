@@ -147,7 +147,7 @@ impl EyeSaverApp {
     fn sync_dim_overlays(&mut self, was_break_layout: bool) {
         let is_break_layout = self.layout.break_layout();
         if is_break_layout && !was_break_layout {
-            if let Some(exclude) = cursor_monitor_bounds() {
+            if let Some(exclude) = self.layout.break_monitor_physical() {
                 self.dim_overlays.show(exclude, self.session.alpha());
             }
         }
@@ -164,8 +164,8 @@ impl EyeSaverApp {
             return;
         }
 
-        let monitor = cursor_monitor_bounds().or_else(|| self.layout.break_monitor());
-        if let Some(monitor) = monitor {
+        // Physical coords only — layout.break_monitor() is logical and must not mix in.
+        if let Some(monitor) = cursor_monitor_bounds() {
             let self_hwnd = hwnd_isize_from_frame(frame);
             if other_fullscreen_window_on_monitor(monitor, self_hwnd) {
                 self.session
