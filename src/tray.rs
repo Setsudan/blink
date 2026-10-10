@@ -1,6 +1,6 @@
 use eframe::egui;
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuId, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem},
     Icon, TrayIcon, TrayIconBuilder,
 };
 
@@ -8,6 +8,7 @@ use tray_icon::{
 pub enum TrayAction {
     BreakNow,
     TogglePause,
+    ToggleSound,
     Quit,
 }
 
@@ -15,21 +16,25 @@ pub struct AppTray {
     tray: TrayIcon,
     break_now_id: MenuId,
     pause_id: MenuId,
+    sound_id: MenuId,
     quit_id: MenuId,
     pause_item: MenuItem,
+    sound_item: CheckMenuItem,
     paused: bool,
     last_tooltip: String,
 }
 
 impl AppTray {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(sound_enabled: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let icon = load_tray_icon()?;
         let menu = Menu::new();
         let break_now = MenuItem::new("Break now", true, None);
         let pause = MenuItem::new("Pause", true, None);
+        let sound = CheckMenuItem::new("Sound", true, sound_enabled, None);
         let quit = MenuItem::new("Quit Blink", true, None);
         menu.append(&break_now)?;
         menu.append(&pause)?;
+        menu.append(&sound)?;
         menu.append(&quit)?;
 
         let tooltip = "Blink  eye break reminder".to_owned();
@@ -43,8 +48,10 @@ impl AppTray {
             tray,
             break_now_id: break_now.id().clone(),
             pause_id: pause.id().clone(),
+            sound_id: sound.id().clone(),
             quit_id: quit.id().clone(),
             pause_item: pause,
+            sound_item: sound,
             paused: false,
             last_tooltip: tooltip,
         })
@@ -60,6 +67,8 @@ impl AppTray {
                     Some(TrayAction::BreakNow)
                 } else if event.id == self.pause_id {
                     Some(TrayAction::TogglePause)
+                } else if event.id == self.sound_id {
+                    Some(TrayAction::ToggleSound)
                 } else {
                     None
                 }
@@ -74,6 +83,10 @@ impl AppTray {
         self.paused = paused;
         let label = if paused { "Resume" } else { "Pause" };
         self.pause_item.set_text(label);
+    }
+
+    pub fn set_sound_enabled(&self, enabled: bool) {
+        self.sound_item.set_checked(enabled);
     }
 
     pub fn set_tooltip(&mut self, text: &str) {

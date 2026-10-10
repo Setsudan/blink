@@ -7,9 +7,11 @@ Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons�
 ## Features
 
 - No always-visible window between breaks
-- System tray icon with **Break now**, **Pause** / **Resume**, and **Quit Blink**
+- System tray icon with **Break now**, **Pause** / **Resume**, **Sound**, and **Quit Blink**
 - Tooltip shows time until the next break and snoozes left
-- Fullscreen break overlay on the monitor under the cursor
+- Fullscreen break overlay on the monitor under the cursor; secondary monitors are dimmed
+- Optional soft chime when a break starts and when the hold finishes successfully
+- AFK reset: if you step away for a few minutes, the work interval restarts so a break does not fire on return
 - Fade in / hold / fade out; **Esc** snoozes (or finishes early if snoozes are used up)
 - Snooze up to 3 times (3 minutes each) when you need a moment
 - Quiet mode: defers the break while another app is fullscreen on that monitor
@@ -62,8 +64,10 @@ Default timings (see `src/config.rs` / config.json):
 | Fade out | 1.4 seconds |
 | Snooze | 3 minutes, max 3 times |
 | Quiet defer | 30 seconds |
+| AFK reset | 3 minutes |
+| Sound | on |
 
-During a break, mouse passthrough is disabled so you can press **I'm busy remind me soon** or **Esc**. Completing a break resets snoozes and starts the full work interval. Snoozing fades out early and schedules the next break sooner.
+During a break, the countdown overlay covers the monitor under the cursor and secondary displays are dimmed with matching layered windows. Mouse passthrough is disabled on the active overlay so you can press **I'm busy remind me soon** or **Esc**. Completing a break resets snoozes and starts the full work interval. Snoozing fades out early and schedules the next break sooner.
 
 ### Config file
 
@@ -76,11 +80,13 @@ On first run Blink writes `%APPDATA%\Blink\config.json`:
   "snooze_secs": 180.0,
   "max_snoozes": 3,
   "fade_in_secs": 2.8,
-  "fade_out_secs": 1.4
+  "fade_out_secs": 1.4,
+  "sound_enabled": true,
+  "afk_reset_secs": 180.0
 }
 ```
 
-Edit and restart Blink to apply. Tray actions do not change these numbers.
+Edit and restart Blink to apply timing changes. The tray **Sound** checkbox toggles `sound_enabled` and saves immediately.
 
 ## Project layout
 
@@ -89,13 +95,14 @@ src/
   main.rs                 # eframe bootstrap
   app.rs                  # App orchestration (logic / ui wiring)
   tray.rs                 # system tray + menu actions
+  audio.rs                # optional soft.mp3 chime (rodio)
   config.rs               # layout/paint defaults + timing defaults
   user_config.rs          # AppData JSON load/create
   easing.rs               # shared smoothstep
   domain/
     break_session.rs      # pure break FSM (wall-clock idle; no egui)
   platform/
-    windows_chrome.rs     # DWM + monitors + quiet fullscreen
+    windows_chrome.rs     # DWM + monitors + quiet fullscreen + AFK + dim overlays
   assets.rs               # SVG icon loading
   viewport/
     layout.rs             # fullscreen ↔ idle sync
@@ -105,14 +112,16 @@ src/
 assets/
   eye.svg
   eye-closed.svg
+  soft.mp3
 ```
 
 ### Architecture
 
 - **domain**  pure Rust break policy and phase machine; unit-tested without egui
 - **config** / **user_config**  compile-time defaults and persisted timings
-- **platform**  OS-specific window chrome, monitor bounds, quiet-mode check
+- **platform**  OS-specific window chrome, monitors, quiet mode, AFK, secondary dim HWNDS
 - **viewport**  maps session state to viewport size / position / passthrough
 - **ui**  paints from an immutable session view; emits `UiAction` (e.g. snooze)
+- **audio**  optional chime on break start / successful hold finish
 - **tray**  tray icon, tooltip, and menu actions
 - **app**  advances time, session, and layout, then applies UI / tray actions

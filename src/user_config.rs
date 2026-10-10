@@ -4,8 +4,16 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    BREAK_SECS, FADE_IN_SECS, FADE_OUT_SECS, MAX_SNOOZES, SNOOZE_SECS, WORK_SECS,
+    AFK_RESET_SECS, BREAK_SECS, FADE_IN_SECS, FADE_OUT_SECS, MAX_SNOOZES, SNOOZE_SECS, WORK_SECS,
 };
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_afk_reset_secs() -> f64 {
+    AFK_RESET_SECS
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -15,6 +23,10 @@ pub struct UserConfig {
     pub max_snoozes: u32,
     pub fade_in_secs: f64,
     pub fade_out_secs: f64,
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
+    #[serde(default = "default_afk_reset_secs")]
+    pub afk_reset_secs: f64,
 }
 
 impl Default for UserConfig {
@@ -26,6 +38,8 @@ impl Default for UserConfig {
             max_snoozes: MAX_SNOOZES,
             fade_in_secs: FADE_IN_SECS,
             fade_out_secs: FADE_OUT_SECS,
+            sound_enabled: true,
+            afk_reset_secs: AFK_RESET_SECS,
         }
     }
 }
@@ -54,12 +68,22 @@ impl UserConfig {
         cfg
     }
 
+    pub fn save_user(&self) {
+        let Some(path) = config_path() else {
+            return;
+        };
+        if let Err(err) = self.save(&path) {
+            eprintln!("blink: failed to write {}: {err}", path.display());
+        }
+    }
+
     fn sanitized(mut self) -> Self {
         self.work_secs = self.work_secs.max(1.0);
         self.break_secs = self.break_secs.max(1.0);
         self.snooze_secs = self.snooze_secs.max(1.0);
         self.fade_in_secs = self.fade_in_secs.max(0.05);
         self.fade_out_secs = self.fade_out_secs.max(0.05);
+        self.afk_reset_secs = self.afk_reset_secs.max(1.0);
         self
     }
 

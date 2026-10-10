@@ -1,17 +1,46 @@
+use std::sync::OnceLock;
+
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
+use windows_sys::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMSBT_NONE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, EnumDisplayMonitors, FillRect,
+    GetMonitorInfoW, GetStockObject, MonitorFromPoint, MonitorFromRect, BLACK_BRUSH, HDC,
+    HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible,
-    SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetCursorPos,
+    GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible, RegisterClassExW,
+    SetLayeredWindowAttributes, SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY, WM_ERASEBKGND, WM_PAINT,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
+
+use crate::config::BREAK_FILL;
+
+const CLASS_NAME: &[u16] = &[
+    b'B' as u16,
+    b'l' as u16,
+    b'i' as u16,
+    b'n' as u16,
+    b'k' as u16,
+    b'S' as u16,
+    b'e' as u16,
+    b'c' as u16,
+    b'D' as u16,
+    b'i' as u16,
+    b'm' as u16,
+    0,
+];
+
+static CLASS_ATOM: OnceLock<u16> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug)]
 pub struct MonitorBounds {
@@ -29,6 +58,14 @@ impl MonitorBounds {
             right: (self.x + self.width).round() as i32,
             bottom: (self.y + self.height).round() as i32,
         }
+    }
+
+    pub fn approx_eq(self, other: Self) -> bool {
+        const SLACK: f32 = 2.0;
+        (self.x - other.x).abs() < SLACK
+            && (self.y - other.y).abs() < SLACK
+            && (self.width - other.width).abs() < SLACK
+            && (self.height - other.height).abs() < SLACK
     }
 }
 
@@ -100,6 +137,35 @@ pub fn cursor_monitor_bounds() -> Option<MonitorBounds> {
     }
 }
 
+pub fn enumerate_monitors() -> Vec<MonitorBounds> {
+    let mut monitors = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            Some(enum_monitor_proc),
+            &mut monitors as *mut Vec<MonitorBounds> as LPARAM,
+        );
+    }
+    monitors
+}
+
+/// Seconds since the last keyboard/mouse input, via GetLastInputInfo.
+pub fn seconds_since_last_input() -> Option<f64> {
+    let mut info = LASTINPUTINFO {
+        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    unsafe {
+        if GetLastInputInfo(&mut info) == 0 {
+            return None;
+        }
+        let now = GetTickCount();
+        let idle_ms = now.wrapping_sub(info.dwTime);
+        Some(idle_ms as f64 / 1000.0)
+    }
+}
+
 /// True when the foreground window (not Blink / not shell chrome) covers the monitor.
 /// Foreground-only avoids EnumWindows false positives that deferred breaks forever.
 pub fn other_fullscreen_window_on_monitor(
@@ -150,6 +216,192 @@ pub fn other_fullscreen_window_on_monitor(
     }
 }
 
+/// Layered fullscreen dim windows for every monitor except the active break display.
+pub struct SecondaryDimOverlays {
+    hwnds: Vec<HWND>,
+}
+
+impl SecondaryDimOverlays {
+    pub fn new() -> Self {
+        Self { hwnds: Vec::new() }
+    }
+
+    pub fn show(&mut self, exclude: MonitorBounds, alpha: f32) {
+        self.clear();
+        ensure_window_class();
+
+        let alpha_byte = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+        for bounds in enumerate_monitors() {
+            if bounds.approx_eq(exclude) {
+                continue;
+            }
+            if let Some(hwnd) = create_dim_window(bounds, alpha_byte) {
+                self.hwnds.push(hwnd);
+            }
+        }
+    }
+
+    pub fn set_alpha(&self, alpha: f32) {
+        let alpha_byte = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+        for &hwnd in &self.hwnds {
+            unsafe {
+                let _ = SetLayeredWindowAttributes(hwnd, 0 as COLORREF, alpha_byte, LWA_ALPHA);
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        for hwnd in self.hwnds.drain(..) {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+                let _ = DestroyWindow(hwnd);
+            }
+        }
+    }
+}
+
+impl Default for SecondaryDimOverlays {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for SecondaryDimOverlays {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+fn ensure_window_class() {
+    CLASS_ATOM.get_or_init(|| unsafe {
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        let class = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: 0,
+            lpfnWndProc: Some(dim_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinstance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: GetStockObject(BLACK_BRUSH) as _,
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: CLASS_NAME.as_ptr(),
+            hIconSm: std::ptr::null_mut(),
+        };
+        let atom = RegisterClassExW(&class);
+        if atom == 0 {
+            eprintln!("blink: failed to register secondary dim window class");
+        }
+        atom
+    });
+}
+
+fn create_dim_window(bounds: MonitorBounds, alpha_byte: u8) -> Option<HWND> {
+    let atom = *CLASS_ATOM.get()?;
+    if atom == 0 {
+        return None;
+    }
+
+    let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
+    let rect = bounds.as_rect();
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            CLASS_NAME.as_ptr(),
+            std::ptr::null(),
+            WS_POPUP,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            hinstance,
+            std::ptr::null(),
+        )
+    };
+    if hwnd.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, 0 as COLORREF, alpha_byte, LWA_ALPHA);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+    Some(hwnd)
+}
+
+unsafe extern "system" fn dim_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT {
+                hdc: std::ptr::null_mut(),
+                fErase: 0,
+                rcPaint: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                fRestore: 0,
+                fIncUpdate: 0,
+                rgbReserved: [0; 32],
+            };
+            let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+            if !hdc.is_null() {
+                fill_break_color(hdc, &ps.rcPaint);
+                unsafe {
+                    let _ = EndPaint(hwnd, &ps);
+                }
+            }
+            0
+        }
+        WM_DESTROY => 0,
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+fn fill_break_color(hdc: HDC, rect: &RECT) {
+    let [r, g, b] = BREAK_FILL;
+    let color: COLORREF = r as u32 | ((g as u32) << 8) | ((b as u32) << 16);
+    unsafe {
+        let brush = CreateSolidBrush(color);
+        if !brush.is_null() {
+            let _ = FillRect(hdc, rect, brush);
+            let _ = DeleteObject(brush);
+        }
+    }
+}
+
+unsafe extern "system" fn enum_monitor_proc(
+    monitor: HMONITOR,
+    _hdc: HDC,
+    _lprc: *mut RECT,
+    lparam: LPARAM,
+) -> BOOL {
+    let list = unsafe { &mut *(lparam as *mut Vec<MonitorBounds>) };
+    if let Some(bounds) = unsafe { monitor_bounds(monitor) } {
+        list.push(bounds);
+    }
+    1
+}
+
 unsafe fn is_shell_chrome(hwnd: HWND) -> bool {
     let mut class = [0u16; 64];
     let len = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
@@ -188,9 +440,7 @@ fn hwnd_from_raw(raw: RawWindowHandle) -> Option<HWND> {
     Some(win.hwnd.get() as HWND)
 }
 
-unsafe fn monitor_bounds(
-    monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
-) -> Option<MonitorBounds> {
+unsafe fn monitor_bounds(monitor: HMONITOR) -> Option<MonitorBounds> {
     let mut info = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         rcMonitor: RECT {

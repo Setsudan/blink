@@ -13,6 +13,14 @@ pub enum BreakPhase {
     FadeOut,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakEvent {
+    /// Break overlay is starting (Idle → Prepare).
+    Started,
+    /// Hold finished successfully (not a snooze).
+    Completed,
+}
+
 #[derive(Debug)]
 pub struct BreakSession {
     config: UserConfig,
@@ -42,6 +50,10 @@ impl BreakSession {
 
     pub fn config(&self) -> &UserConfig {
         &self.config
+    }
+
+    pub fn set_sound_enabled(&mut self, enabled: bool) {
+        self.config.sound_enabled = enabled;
     }
 
     pub fn phase(&self) -> BreakPhase {
@@ -118,12 +130,21 @@ impl BreakSession {
         self.next_break_at = Instant::now() + remaining;
     }
 
-    pub fn start_break_now(&mut self) {
+    pub fn start_break_now(&mut self) -> Option<BreakEvent> {
         if self.phase != BreakPhase::Idle {
-            return;
+            return None;
         }
         self.paused_remaining = None;
         self.enter_prepare();
+        Some(BreakEvent::Started)
+    }
+
+    /// Restart the work interval after AFK idle; no-op while paused or on break.
+    pub fn reset_work_interval(&mut self) {
+        if self.phase != BreakPhase::Idle || self.paused_remaining.is_some() {
+            return;
+        }
+        self.next_break_at = Instant::now() + duration_secs(self.config.work_secs);
     }
 
     /// Escape: snooze when available, otherwise finish the break successfully via fade-out.
@@ -170,9 +191,12 @@ impl BreakSession {
             && Instant::now() >= self.next_break_at
     }
 
-    pub fn begin_due_break(&mut self) {
+    pub fn begin_due_break(&mut self) -> Option<BreakEvent> {
         if self.break_is_due() {
             self.enter_prepare();
+            Some(BreakEvent::Started)
+        } else {
+            None
         }
     }
 
@@ -198,10 +222,11 @@ impl BreakSession {
         self.next_break_at = Instant::now() + duration_secs(self.config.snooze_secs);
     }
 
-    pub fn advance(&mut self, dt: f64) {
+    pub fn advance(&mut self, dt: f64) -> Option<BreakEvent> {
         match self.phase {
             BreakPhase::Idle => {
                 // Wall-clock idle; app calls begin_due_break after quiet checks.
+                None
             }
             BreakPhase::Prepare => {
                 self.phase_t += dt;
@@ -209,6 +234,7 @@ impl BreakSession {
                     self.phase = BreakPhase::FadeIn;
                     self.phase_t = 0.0;
                 }
+                None
             }
             BreakPhase::FadeIn => {
                 self.phase_t += dt;
@@ -216,6 +242,7 @@ impl BreakSession {
                     self.phase = BreakPhase::Hold;
                     self.phase_t = 0.0;
                 }
+                None
             }
             BreakPhase::Hold => {
                 self.phase_t += dt;
@@ -223,15 +250,20 @@ impl BreakSession {
                     self.phase = BreakPhase::FadeOut;
                     self.phase_t = 0.0;
                 }
+                None
             }
             BreakPhase::FadeOut => {
                 self.phase_t += dt;
                 if self.phase_t >= self.config.fade_out_secs {
                     if self.pending_snooze {
                         self.finish_snooze();
+                        None
                     } else {
                         self.finish_break_success();
+                        Some(BreakEvent::Completed)
                     }
+                } else {
+                    None
                 }
             }
         }
@@ -435,5 +467,60 @@ mod tests {
         s.defer_break(Duration::from_secs(30));
         assert!(!s.break_is_due());
         assert!(s.secs_until_break() > 20.0);
+    }
+
+    #[test]
+    fn reset_work_interval_restarts_idle_clock() {
+        let mut s = session();
+        s.next_break_at = Instant::now() + Duration::from_secs(5);
+        assert!(s.secs_until_break() < 10.0);
+
+        s.reset_work_interval();
+        let until = s.secs_until_break();
+        assert!(until <= s.config.work_secs + 0.05);
+        assert!(until >= s.config.work_secs - 1.0);
+    }
+
+    #[test]
+    fn reset_work_interval_noop_when_paused_or_active() {
+        let mut s = session();
+        s.next_break_at = Instant::now() + Duration::from_secs(5);
+        s.pause();
+        s.reset_work_interval();
+        assert!(s.secs_until_break() < 10.0);
+
+        s.resume();
+        s.start_break_now();
+        let before = s.secs_until_break();
+        s.reset_work_interval();
+        assert_eq!(s.phase(), BreakPhase::Prepare);
+        assert_eq!(s.secs_until_break(), before);
+    }
+
+    #[test]
+    fn start_and_due_emit_started_event() {
+        let mut s = session();
+        assert_eq!(s.start_break_now(), Some(BreakEvent::Started));
+
+        let mut s = session();
+        s.next_break_at = Instant::now() - Duration::from_millis(1);
+        assert_eq!(s.begin_due_break(), Some(BreakEvent::Started));
+    }
+
+    #[test]
+    fn advance_emits_completed_not_on_snooze() {
+        let mut s = session();
+        s.phase = BreakPhase::FadeOut;
+        s.phase_t = FADE_OUT_SECS;
+        s.pending_snooze = false;
+        assert_eq!(s.advance(0.01), Some(BreakEvent::Completed));
+
+        let mut s = session();
+        s.phase = BreakPhase::FadeOut;
+        s.phase_t = FADE_OUT_SECS;
+        s.pending_snooze = true;
+        s.snoozes_used = 1;
+        assert_eq!(s.advance(0.01), None);
+        assert_eq!(s.phase(), BreakPhase::Idle);
     }
 }

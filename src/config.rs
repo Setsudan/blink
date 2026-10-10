@@ -34,3 +34,5 @@ pub const RESTORE_OK_FRAMES_NEEDED: u32 = 3;
 pub const FADE_OUT_SHRINK_RATIO: f64 = 0.2;
 /// When another app is fullscreen, defer the next break by this long.
 pub const QUIET_DEFER_SECS: f64 = 30.0;
+/// Reset the work interval after this much keyboard/mouse idle time.
+pub const AFK_RESET_SECS: f64 = 3.0 * 60.0;
