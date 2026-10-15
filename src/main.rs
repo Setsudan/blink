@@ -17,10 +17,13 @@ use eframe::egui;
 
 use crate::app::EyeSaverApp;
 use crate::config::IDLE_WINDOW_SIZE;
-use crate::platform::suppress_window_chrome;
+use crate::platform::{single_instance_acquire, suppress_window_chrome};
 
 fn main() -> eframe::Result {
     logutil::init();
+    if !single_instance_acquire() {
+        return Ok(());
+    }
     logutil::log("main: starting eframe");
 
     let options = eframe::NativeOptions {

@@ -27,6 +27,8 @@ pub struct BreakSession {
     next_break_at: Instant,
     /// Remaining idle delay while paused; applied again on resume.
     paused_remaining: Option<Duration>,
+    /// Timed-pause deadline; auto-resumes in `advance` once reached.
+    resume_at: Option<Instant>,
     snoozes_used: u32,
     /// Set when the user hits snooze; distinguishes snooze fade-out from a finished break.
     pending_snooze: bool,
@@ -41,6 +43,7 @@ impl BreakSession {
             config,
             next_break_at: Instant::now() + work,
             paused_remaining: None,
+            resume_at: None,
             snoozes_used: 0,
             pending_snooze: false,
             phase: BreakPhase::Idle,
@@ -122,16 +125,37 @@ impl BreakSession {
     }
 
     pub fn pause(&mut self) {
+        self.pause_for(None);
+    }
+
+    /// Pause indefinitely (None) or until `duration` elapses.
+    pub fn pause_for(&mut self, duration: Option<Duration>) {
         if self.paused_remaining.is_some() || self.phase != BreakPhase::Idle {
             return;
         }
-        self.paused_remaining = Some(self.next_break_at.saturating_duration_since(Instant::now()));
+        let now = Instant::now();
+        self.paused_remaining = Some(self.next_break_at.saturating_duration_since(now));
+        self.resume_at = duration.map(|d| now + d);
+    }
+
+    /// Seconds until a timed pause auto-resumes; None when indefinite or not paused.
+    pub fn pause_remaining(&self) -> Option<f64> {
+        let resume_at = self.resume_at?;
+        if self.paused_remaining.is_none() {
+            return None;
+        }
+        Some(
+            resume_at
+                .saturating_duration_since(Instant::now())
+                .as_secs_f64(),
+        )
     }
 
     pub fn resume(&mut self) {
         let Some(remaining) = self.paused_remaining.take() else {
             return;
         };
+        self.resume_at = None;
         self.next_break_at = Instant::now() + remaining;
     }
 
@@ -140,6 +164,7 @@ impl BreakSession {
             return None;
         }
         self.paused_remaining = None;
+        self.resume_at = None;
         self.enter_prepare();
         Some(BreakEvent::Started)
     }
@@ -150,6 +175,26 @@ impl BreakSession {
             return;
         }
         self.next_break_at = Instant::now() + duration_secs(self.config.work_secs);
+    }
+
+    /// Skip the upcoming break: restarts the full work interval and resets snoozes.
+    pub fn skip_next_break(&mut self) {
+        if self.phase != BreakPhase::Idle || self.paused_remaining.is_some() {
+            return;
+        }
+        self.snoozes_used = 0;
+        self.next_break_at = Instant::now() + duration_secs(self.config.work_secs);
+    }
+
+    /// True when idle, not paused, and the break is within `lead_secs`.
+    pub fn warning_due(&self, lead_secs: f64) -> bool {
+        self.phase == BreakPhase::Idle
+            && self.paused_remaining.is_none()
+            && self.secs_until_break() <= lead_secs
+    }
+
+    pub fn scheduled_break_at(&self) -> Instant {
+        self.next_break_at
     }
 
     /// Escape: snooze when available, otherwise finish the break successfully via fade-out.
@@ -216,6 +261,7 @@ impl BreakSession {
         self.snoozes_used = 0;
         self.pending_snooze = false;
         self.paused_remaining = None;
+        self.resume_at = None;
         self.next_break_at = Instant::now() + duration_secs(self.config.work_secs);
     }
 
@@ -224,6 +270,7 @@ impl BreakSession {
         self.phase = BreakPhase::Idle;
         self.phase_t = 0.0;
         self.paused_remaining = None;
+        self.resume_at = None;
         self.next_break_at = Instant::now() + duration_secs(self.config.snooze_secs);
     }
 
@@ -231,6 +278,11 @@ impl BreakSession {
         match self.phase {
             BreakPhase::Idle => {
                 // Wall-clock idle; app calls begin_due_break after quiet checks.
+                if let Some(resume_at) = self.resume_at
+                    && Instant::now() >= resume_at
+                {
+                    self.resume();
+                }
                 None
             }
             BreakPhase::Prepare => {
@@ -435,6 +487,89 @@ mod tests {
         // Resume restores the paused remaining (~60s), not the expired clock.
         assert!(!s.break_is_due());
         assert!(s.secs_until_break() > 50.0);
+    }
+
+    #[test]
+    fn pause_for_auto_resumes_after_deadline() {
+        let mut s = session();
+        s.pause_for(Some(Duration::from_secs(60)));
+        assert!(s.is_paused());
+        let paused_remaining = s.secs_until_break();
+
+        // Push the deadline into the past; advance should auto-resume.
+        s.resume_at = Some(Instant::now() - Duration::from_millis(1));
+        s.advance(0.0);
+
+        assert!(!s.is_paused());
+        assert_eq!(s.resume_at, None);
+        let until = s.secs_until_break();
+        assert!(until <= paused_remaining + 0.05);
+        assert!(until >= paused_remaining - 1.0);
+    }
+
+    #[test]
+    fn pause_for_none_never_auto_resumes() {
+        let mut s = session();
+        s.pause_for(None);
+        assert!(s.is_paused());
+        assert_eq!(s.resume_at, None);
+        s.advance(0.0);
+        assert!(s.is_paused());
+    }
+
+    #[test]
+    fn pause_remaining_reports_deadline() {
+        let mut s = session();
+        assert_eq!(s.pause_remaining(), None);
+
+        s.pause_for(Some(Duration::from_secs(90)));
+        let remaining = s.pause_remaining().unwrap();
+        assert!(remaining <= 90.0);
+        assert!(remaining >= 89.0);
+
+        s.resume();
+        assert_eq!(s.pause_remaining(), None);
+
+        let mut s = session();
+        s.pause();
+        assert_eq!(s.pause_remaining(), None);
+    }
+
+    #[test]
+    fn skip_next_break_resets_clock_and_snoozes() {
+        let mut s = session();
+        s.snoozes_used = 2;
+        s.next_break_at = Instant::now() + Duration::from_secs(5);
+        s.skip_next_break();
+        assert_eq!(s.snoozes_used, 0);
+        let until = s.secs_until_break();
+        assert!(until <= s.config.work_secs + 0.05);
+        assert!(until >= s.config.work_secs - 1.0);
+    }
+
+    #[test]
+    fn skip_next_break_noop_when_paused_or_active() {
+        let mut s = session();
+        s.next_break_at = Instant::now() + Duration::from_secs(5);
+        s.pause();
+        s.skip_next_break();
+        assert!(s.secs_until_break() < 10.0);
+
+        let mut s = session();
+        s.start_break_now();
+        s.skip_next_break();
+        assert_eq!(s.phase(), BreakPhase::Prepare);
+    }
+
+    #[test]
+    fn warning_due_only_within_lead() {
+        let mut s = session();
+        s.next_break_at = Instant::now() + Duration::from_secs(30);
+        assert!(!s.warning_due(20.0));
+        assert!(s.warning_due(31.0));
+
+        s.pause();
+        assert!(!s.warning_due(60.0));
     }
 
     #[test]

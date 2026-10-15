@@ -1,0 +1,113 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  WiX source for Blink. Built with `cargo wix` (see scripts/build-msi.ps1).
+
+  Preprocessor variables set by cargo-wix:
+    Version, CargoTargetBinDir, CargoTargetDir, CargoProfile, TargetTriple, ...
+-->
+
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+    <Product
+        Id='*'
+        Name='Blink'
+        UpgradeCode='C4BC7736-B448-4E55-A987-1C7A6E376C89'
+        Manufacturer='Blink'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='Windows tray utility that nudges you to rest your eyes (20/20/20).'
+            Manufacturer='Blink'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252'
+            />
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+        <Property Id='DiskPrompt' Value='Blink Installation'/>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='Blink'>
+                    <Component Id='Application' Guid='F9DC0010-1217-498B-B5FD-4D027A8B35A4'>
+                        <File
+                            Id='BlinkExe'
+                            Name='blink.exe'
+                            DiskId='1'
+                            Source='$(var.CargoTargetBinDir)\blink.exe'
+                            KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+            <Directory Id='ProgramMenuFolder' Name='Programs'>
+                <Directory Id='ProgramMenuDir' Name='Blink'>
+                    <Component Id='StartMenuAndCleanup' Guid='A3E8C2F1-9B4D-4E70-8C6A-2D5F1B0E7A94'>
+                        <Shortcut
+                            Id='StartMenuShortcut'
+                            Name='Blink'
+                            Description='Rest your eyes (20/20/20)'
+                            Target='[APPLICATIONFOLDER]blink.exe'
+                            WorkingDirectory='APPLICATIONFOLDER'
+                            Icon='ProductICO'
+                            IconIndex='0'/>
+                        <RemoveFolder Id='RemoveProgramMenuDir' On='uninstall'/>
+                        <!-- Clear leftover launch-on-startup entry written by Settings. -->
+                        <RemoveRegistryValue
+                            Root='HKCU'
+                            Key='Software\Microsoft\Windows\CurrentVersion\Run'
+                            Name='Blink'/>
+                        <RegistryValue
+                            Root='HKCU'
+                            Key='Software\Blink'
+                            Name='installed'
+                            Type='integer'
+                            Value='1'
+                            KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature
+            Id='Complete'
+            Title='Blink'
+            Description='Install Blink.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Absent='disallow'>
+            <ComponentRef Id='Application'/>
+            <ComponentRef Id='StartMenuAndCleanup'/>
+        </Feature>
+
+        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+
+        <Icon Id='ProductICO' SourceFile='assets\blink.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
+
+        <UI>
+            <UIRef Id='WixUI_InstallDir'/>
+            <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='InstallDirDlg' Order='99'>1</Publish>
+            <Publish Dialog='InstallDirDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+        </UI>
+
+        <Property Id='WIXUI_INSTALLDIR' Value='APPLICATIONFOLDER'/>
+
+    </Product>
+
+</Wix>

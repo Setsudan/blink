@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    AFK_RESET_SECS, BREAK_SECS, FADE_IN_SECS, FADE_OUT_SECS, MAX_SNOOZES, SNOOZE_SECS, WORK_SECS,
+    AFK_RESET_SECS, BREAK_SECS, FADE_IN_SECS, FADE_OUT_SECS, MAX_SNOOZES, SNOOZE_SECS,
+    WARN_BEFORE_SECS, WORK_SECS,
 };
 
 fn default_true() -> bool {
@@ -13,6 +14,10 @@ fn default_true() -> bool {
 
 fn default_afk_reset_secs() -> f64 {
     AFK_RESET_SECS
+}
+
+fn default_warn_before_secs() -> f64 {
+    WARN_BEFORE_SECS
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,6 +34,12 @@ pub struct UserConfig {
     pub afk_reset_secs: f64,
     #[serde(default)]
     pub launch_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub hotkeys_enabled: bool,
+    #[serde(default)]
+    pub warn_enabled: bool,
+    #[serde(default = "default_warn_before_secs")]
+    pub warn_before_secs: f64,
 }
 
 impl Default for UserConfig {
@@ -43,6 +54,9 @@ impl Default for UserConfig {
             sound_enabled: true,
             afk_reset_secs: AFK_RESET_SECS,
             launch_on_startup: false,
+            hotkeys_enabled: true,
+            warn_enabled: false,
+            warn_before_secs: WARN_BEFORE_SECS,
         }
     }
 }
@@ -87,6 +101,7 @@ impl UserConfig {
         self.fade_in_secs = self.fade_in_secs.max(0.05);
         self.fade_out_secs = self.fade_out_secs.max(0.05);
         self.afk_reset_secs = self.afk_reset_secs.max(1.0);
+        self.warn_before_secs = self.warn_before_secs.clamp(3.0, (self.work_secs - 1.0).max(3.0));
         self
     }
 
@@ -103,4 +118,43 @@ impl UserConfig {
 fn config_path() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA")?;
     Some(PathBuf::from(appdata).join("Blink").join("config.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_fields_default() {
+        let cfg = UserConfig::default();
+        assert!(cfg.hotkeys_enabled);
+        assert!(!cfg.warn_enabled);
+        assert_eq!(cfg.warn_before_secs, WARN_BEFORE_SECS);
+
+        // Old config files without the new keys still deserialize.
+        let json = r#"{"work_secs":1200.0,"break_secs":20.0,"snooze_secs":180.0,
+            "max_snoozes":3,"fade_in_secs":2.8,"fade_out_secs":1.4}"#;
+        let cfg: UserConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.hotkeys_enabled);
+        assert!(!cfg.warn_enabled);
+        assert_eq!(cfg.warn_before_secs, WARN_BEFORE_SECS);
+    }
+
+    #[test]
+    fn sanitize_clamps_warn_before_secs() {
+        let mut cfg = UserConfig::default();
+        cfg.warn_before_secs = 0.5;
+        assert_eq!(cfg.sanitized().warn_before_secs, 3.0);
+
+        let mut cfg = UserConfig::default();
+        let work = cfg.work_secs;
+        cfg.warn_before_secs = work + 100.0;
+        assert_eq!(cfg.sanitized().warn_before_secs, work - 1.0);
+
+        let mut cfg = UserConfig::default();
+        cfg.work_secs = 2.0;
+        cfg.warn_before_secs = 50.0;
+        // work_secs floor is 1.0; lead clamps to its own 3.0 minimum.
+        assert_eq!(cfg.sanitized().warn_before_secs, 3.0);
+    }
 }

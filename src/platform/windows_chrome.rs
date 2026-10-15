@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -7,23 +7,31 @@ use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMSBT_NONE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, EnumDisplayMonitors, FillRect,
-    GetMonitorInfoW, GetStockObject, InvalidateRect, MonitorFromPoint, MonitorFromRect,
-    UpdateWindow, BLACK_BRUSH, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
+    BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
+    EnumDisplayMonitors, FillRect, GetMonitorInfoW, GetStockObject, InvalidateRect,
+    MonitorFromPoint, MonitorFromRect, SelectObject, SetBkMode, SetTextColor, UpdateWindow,
+    BLACK_BRUSH, CLEARTYPE_QUALITY, DEFAULT_CHARSET, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HDC,
+    HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetCursorPos,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetClientRect, GetCursorPos,
     GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible, RegisterClassExW,
     SetLayeredWindowAttributes, SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE,
-    SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY, WM_ERASEBKGND, WM_PAINT,
-    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY,
+    WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 
-use crate::config::BREAK_FILL;
+use crate::config::{BREAK_FILL, INK_RGB};
+
+fn rgb(rgb: [u8; 3]) -> COLORREF {
+    let [r, g, b] = rgb;
+    r as u32 | ((g as u32) << 8) | ((b as u32) << 16)
+}
 
 const CLASS_NAME: &[u16] = &[
     b'B' as u16,
@@ -433,10 +441,8 @@ unsafe extern "system" fn dim_wnd_proc(
 }
 
 fn fill_break_color(hdc: HDC, rect: &RECT) {
-    let [r, g, b] = BREAK_FILL;
-    let color: COLORREF = r as u32 | ((g as u32) << 8) | ((b as u32) << 16);
     unsafe {
-        let brush = CreateSolidBrush(color);
+        let brush = CreateSolidBrush(rgb(BREAK_FILL));
         if !brush.is_null() {
             let _ = FillRect(hdc, rect, brush);
             let _ = DeleteObject(brush);
@@ -527,4 +533,259 @@ unsafe fn monitor_bounds(monitor: HMONITOR) -> Option<MonitorBounds> {
         width,
         height,
     })
+}
+
+// ---- Pre-break warning toast ---------------------------------------------
+
+const TOAST_CLASS: &[u16] = &[
+    b'B' as u16, b'l' as u16, b'i' as u16, b'n' as u16, b'k' as u16, b'T' as u16, b'o' as u16,
+    b'a' as u16, b's' as u16, b't' as u16, 0,
+];
+const TOAST_ALPHA: u8 = 235;
+const TOAST_W: i32 = 280;
+const TOAST_H: i32 = 60;
+const TOAST_MARGIN: i32 = 24;
+const FONT_SEGOE_UI: &[u16] = &[
+    b'S' as u16, b'e' as u16, b'g' as u16, b'o' as u16, b'e' as u16, b' ' as u16, b'U' as u16,
+    b'I' as u16, 0,
+];
+
+static TOAST_CLASS_ATOM: OnceLock<u16> = OnceLock::new();
+static TOAST_TEXT: Mutex<String> = Mutex::new(String::new());
+
+/// Small bottom-right toast warning that a break is about to start.
+/// Same main-thread HWND pattern as SecondaryDimOverlays; created on demand.
+pub struct PreBreakToast {
+    hwnd: Option<HWND>,
+}
+
+impl PreBreakToast {
+    pub fn new() -> Self {
+        Self { hwnd: None }
+    }
+
+    pub fn show(&mut self, text: &str) {
+        set_toast_text(text);
+        if self.hwnd.is_none() {
+            self.hwnd = create_toast_window();
+        }
+        let Some(hwnd) = self.hwnd else {
+            return;
+        };
+        // Re-assert topmost so the toast does not slide under new windows.
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            let _ = InvalidateRect(hwnd, std::ptr::null(), 1);
+        }
+    }
+
+    pub fn set_text(&mut self, text: &str) {
+        if !set_toast_text(text) {
+            return;
+        }
+        if let Some(hwnd) = self.hwnd {
+            unsafe {
+                let _ = InvalidateRect(hwnd, std::ptr::null(), 1);
+            }
+        }
+    }
+
+    pub fn hide(&mut self) {
+        if let Some(hwnd) = self.hwnd.take() {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+                let _ = DestroyWindow(hwnd);
+            }
+        }
+    }
+}
+
+impl Default for PreBreakToast {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for PreBreakToast {
+    fn drop(&mut self) {
+        self.hide();
+    }
+}
+
+/// Returns false when the text was already set.
+fn set_toast_text(text: &str) -> bool {
+    if let Ok(mut slot) = TOAST_TEXT.lock() {
+        if *slot == text {
+            return false;
+        }
+        *slot = text.to_owned();
+    }
+    true
+}
+
+fn ensure_toast_class() -> Option<u16> {
+    let atom = *TOAST_CLASS_ATOM.get_or_init(|| unsafe {
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        let class = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: 0,
+            lpfnWndProc: Some(toast_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinstance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: GetStockObject(BLACK_BRUSH) as _,
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: TOAST_CLASS.as_ptr(),
+            hIconSm: std::ptr::null_mut(),
+        };
+        RegisterClassExW(&class)
+    });
+    (atom != 0).then_some(atom)
+}
+
+fn create_toast_window() -> Option<HWND> {
+    ensure_toast_class()?;
+    let monitor = cursor_monitor_bounds()?;
+    let rect = monitor.as_rect();
+    let x = rect.right - TOAST_W - TOAST_MARGIN;
+    let y = rect.bottom - TOAST_H - TOAST_MARGIN;
+
+    let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) };
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            TOAST_CLASS.as_ptr(),
+            std::ptr::null(),
+            WS_POPUP,
+            x,
+            y,
+            TOAST_W,
+            TOAST_H,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            hinstance,
+            std::ptr::null(),
+        )
+    };
+    if hwnd.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, 0 as COLORREF, TOAST_ALPHA, LWA_ALPHA);
+        let _ = InvalidateRect(hwnd, std::ptr::null(), 1);
+        let _ = UpdateWindow(hwnd);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+    Some(hwnd)
+}
+
+unsafe extern "system" fn toast_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT {
+                hdc: std::ptr::null_mut(),
+                fErase: 0,
+                rcPaint: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                fRestore: 0,
+                fIncUpdate: 0,
+                rgbReserved: [0; 32],
+            };
+            let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+            if !hdc.is_null() {
+                let mut client = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                unsafe {
+                    GetClientRect(hwnd, &mut client);
+                }
+                fill_break_color(hdc, &client);
+                paint_toast_text(hwnd, hdc);
+                unsafe {
+                    let _ = EndPaint(hwnd, &ps);
+                }
+            }
+            0
+        }
+        WM_DESTROY => 0,
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+fn paint_toast_text(hwnd: HWND, hdc: HDC) {
+    let text = TOAST_TEXT.lock().map(|t| t.clone()).unwrap_or_default();
+    if text.is_empty() {
+        return;
+    }
+    let mut draw_rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    unsafe {
+        GetClientRect(hwnd, &mut draw_rect);
+    }
+    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
+    let height = -20 * dpi / 96;
+    let font = unsafe {
+        CreateFontW(
+            height,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET as u32,
+            OUT_DEFAULT_PRECIS as u32,
+            0,
+            CLEARTYPE_QUALITY as u32,
+            0,
+            FONT_SEGOE_UI.as_ptr(),
+        )
+    };
+    if font.is_null() {
+        return;
+    }
+    unsafe {
+        let old = SelectObject(hdc, font);
+        SetBkMode(hdc, TRANSPARENT as i32);
+        SetTextColor(hdc, rgb(INK_RGB));
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        DrawTextW(
+            hdc,
+            wide.as_ptr(),
+            wide.len() as i32,
+            &mut draw_rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+        SelectObject(hdc, old);
+        DeleteObject(font);
+    }
 }

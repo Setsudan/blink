@@ -2,8 +2,15 @@
 name = "blink"
 version = "0.1.0"
 edition = "2024"
+authors = ["Blink"]
 description = "Windows tray utility that nudges you to rest your eyes (20/20/20)."
 license = "MIT"
+
+[package.metadata.wix]
+upgrade-guid = "C4BC7736-B448-4E55-A987-1C7A6E376C89"
+path-guid = "F9DC0010-1217-498B-B5FD-4D027A8B35A4"
+license = false
+eula = false
 
 [dependencies]
 eframe = "0.36.2"
@@ -23,7 +30,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
     "Win32_System_LibraryLoader",
+    "Win32_System_Power",
     "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Controls",

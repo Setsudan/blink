@@ -3,16 +3,22 @@ mod autostart;
 #[cfg(windows)]
 pub mod settings_dialog;
 #[cfg(windows)]
+mod single_instance;
+#[cfg(windows)]
+pub mod system_events;
+#[cfg(windows)]
 mod windows_chrome;
 
 #[cfg(windows)]
 pub use autostart::sync as autostart_sync;
+#[cfg(windows)]
+pub use single_instance::acquire as single_instance_acquire;
 
 #[cfg(windows)]
 pub use windows_chrome::{
     cursor_monitor_bounds, force_window_bounds, force_window_bounds_physical,
     hwnd_isize_from_frame, other_fullscreen_window_on_monitor, seconds_since_last_input,
-    suppress_window_chrome, MonitorBounds, SecondaryDimOverlays,
+    suppress_window_chrome, MonitorBounds, PreBreakToast, SecondaryDimOverlays,
 };
 
 #[cfg(not(windows))]
@@ -123,6 +129,55 @@ impl SecondaryDimOverlays {
 
 #[cfg(not(windows))]
 impl Default for SecondaryDimOverlays {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(windows))]
+pub fn single_instance_acquire() -> bool {
+    true
+}
+
+#[cfg(not(windows))]
+pub mod system_events {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum SystemEvent {
+        Suspend,
+        Resume,
+        SessionLock,
+        SessionUnlock,
+        HotkeyBreakNow,
+        HotkeyTogglePause,
+    }
+
+    pub fn start(_hotkeys_enabled: bool, _wake: Box<dyn Fn() + Send + Sync + 'static>) {}
+
+    pub fn drain() -> Vec<SystemEvent> {
+        Vec::new()
+    }
+
+    pub fn set_hotkeys_enabled(_enabled: bool) {}
+}
+
+#[cfg(not(windows))]
+pub struct PreBreakToast;
+
+#[cfg(not(windows))]
+impl PreBreakToast {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn show(&mut self, _text: &str) {}
+
+    pub fn set_text(&mut self, _text: &str) {}
+
+    pub fn hide(&mut self) {}
+}
+
+#[cfg(not(windows))]
+impl Default for PreBreakToast {
     fn default() -> Self {
         Self::new()
     }

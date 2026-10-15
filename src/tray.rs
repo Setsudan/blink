@@ -1,13 +1,20 @@
+use std::time::Duration;
+
 use eframe::egui;
 use tray_icon::{
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem},
+    menu::{
+        CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    },
     Icon, TrayIcon, TrayIconBuilder,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayAction {
     BreakNow,
+    SkipNextBreak,
+    PostponeFiveMinutes,
     TogglePause,
+    PauseFor(Duration),
     ToggleSound,
     OpenSettings,
     Quit,
@@ -16,7 +23,10 @@ pub enum TrayAction {
 pub struct AppTray {
     tray: TrayIcon,
     break_now_id: MenuId,
+    skip_id: MenuId,
+    postpone_id: MenuId,
     pause_id: MenuId,
+    pause_for_ids: Vec<(MenuId, Duration)>,
     sound_id: MenuId,
     settings_id: MenuId,
     quit_id: MenuId,
@@ -31,14 +41,30 @@ impl AppTray {
         let icon = load_tray_icon()?;
         let menu = Menu::new();
         let break_now = MenuItem::new("Break now", true, None);
+        let skip = MenuItem::new("Skip next break", true, None);
+        let postpone = MenuItem::new("Postpone 5 min", true, None);
         let pause = MenuItem::new("Pause", true, None);
+        let pause_for = Submenu::new("Pause for", true);
+        let pause_15 = MenuItem::new("15 minutes", true, None);
+        let pause_1h = MenuItem::new("1 hour", true, None);
+        let pause_4h = MenuItem::new("4 hours", true, None);
         let sound = CheckMenuItem::new("Sound", true, sound_enabled, None);
         let settings = MenuItem::new("Settings", true, None);
         let quit = MenuItem::new("Quit Blink", true, None);
+
         menu.append(&break_now)?;
+        menu.append(&skip)?;
+        menu.append(&postpone)?;
+        menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&pause)?;
+        pause_for.append(&pause_15)?;
+        pause_for.append(&pause_1h)?;
+        pause_for.append(&pause_4h)?;
+        menu.append(&pause_for)?;
+        menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&sound)?;
         menu.append(&settings)?;
+        menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
         let tooltip = "Blink  eye break reminder".to_owned();
@@ -51,7 +77,14 @@ impl AppTray {
         Ok(Self {
             tray,
             break_now_id: break_now.id().clone(),
+            skip_id: skip.id().clone(),
+            postpone_id: postpone.id().clone(),
             pause_id: pause.id().clone(),
+            pause_for_ids: vec![
+                (pause_15.id().clone(), Duration::from_secs(15 * 60)),
+                (pause_1h.id().clone(), Duration::from_secs(60 * 60)),
+                (pause_4h.id().clone(), Duration::from_secs(4 * 60 * 60)),
+            ],
             sound_id: sound.id().clone(),
             settings_id: settings.id().clone(),
             quit_id: quit.id().clone(),
@@ -70,8 +103,16 @@ impl AppTray {
                     Some(TrayAction::Quit)
                 } else if event.id == self.break_now_id {
                     Some(TrayAction::BreakNow)
+                } else if event.id == self.skip_id {
+                    Some(TrayAction::SkipNextBreak)
+                } else if event.id == self.postpone_id {
+                    Some(TrayAction::PostponeFiveMinutes)
                 } else if event.id == self.pause_id {
                     Some(TrayAction::TogglePause)
+                } else if let Some((_, duration)) =
+                    self.pause_for_ids.iter().find(|(id, _)| event.id == *id)
+                {
+                    Some(TrayAction::PauseFor(*duration))
                 } else if event.id == self.sound_id {
                     Some(TrayAction::ToggleSound)
                 } else if event.id == self.settings_id {

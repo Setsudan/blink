@@ -48,6 +48,9 @@ const ID_FADE_IN: isize = 1006;
 const ID_FADE_OUT: isize = 1007;
 const ID_SOUND: isize = 1008;
 const ID_STARTUP: isize = 1009;
+const ID_WARN: isize = 1010;
+const ID_WARN_LEAD: isize = 1011;
+const ID_HOTKEYS: isize = 1012;
 const ID_SAVE: isize = 1100;
 const ID_CANCEL: isize = 1101;
 
@@ -87,7 +90,10 @@ struct DialogState {
     afk: HWND,
     fade_in: HWND,
     fade_out: HWND,
+    warn: HWND,
+    warn_lead: HWND,
     sound: HWND,
+    hotkeys: HWND,
     startup: HWND,
 }
 
@@ -220,16 +226,40 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
     label(208, "Fade out (sec)");
     let fade_out = edit(208, ID_FADE_OUT, &format!("{:.2}", cfg.fade_out_secs), false);
 
+    let warn = create_child(
+        parent,
+        CTRL_BUTTON,
+        "Warn before break",
+        BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+        16,
+        240,
+        200,
+        24,
+        ID_WARN,
+    );
+    label(272, "Warning lead (s)");
+    let warn_lead = edit(272, ID_WARN_LEAD, &format!("{:.0}", cfg.warn_before_secs), true);
     let sound = create_child(
         parent,
         CTRL_BUTTON,
         "Sound",
         BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
         16,
-        248,
+        304,
         200,
         24,
         ID_SOUND,
+    );
+    let hotkeys = create_child(
+        parent,
+        CTRL_BUTTON,
+        "Global hotkeys (Ctrl+Alt+B break, Ctrl+Alt+P pause)",
+        BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+        16,
+        336,
+        370,
+        24,
+        ID_HOTKEYS,
     );
     let startup = create_child(
         parent,
@@ -237,12 +267,14 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         "Launch on startup",
         BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
         16,
-        280,
+        368,
         240,
         24,
         ID_STARTUP,
     );
+    set_checked(warn, cfg.warn_enabled);
     set_checked(sound, cfg.sound_enabled);
+    set_checked(hotkeys, cfg.hotkeys_enabled);
     set_checked(startup, cfg.launch_on_startup);
 
     create_child(
@@ -251,7 +283,7 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         "Save",
         BS_DEFPUSHBUTTON as u32 | WS_TABSTOP,
         210,
-        320,
+        416,
         80,
         28,
         ID_SAVE,
@@ -262,7 +294,7 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         "Cancel",
         BS_PUSHBUTTON as u32 | WS_TABSTOP,
         300,
-        320,
+        416,
         80,
         28,
         ID_CANCEL,
@@ -276,7 +308,10 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         afk,
         fade_in,
         fade_out,
+        warn,
+        warn_lead,
         sound,
+        hotkeys,
         startup,
     }
 }
@@ -295,6 +330,9 @@ fn read_config(state: &DialogState) -> UserConfig {
         sound_enabled: is_checked(state.sound),
         afk_reset_secs: afk_mins * 60.0,
         launch_on_startup: is_checked(state.startup),
+        hotkeys_enabled: is_checked(state.hotkeys),
+        warn_enabled: is_checked(state.warn),
+        warn_before_secs: parse_f64(state.warn_lead, 20.0),
     }
     .sanitized()
 }
@@ -405,7 +443,7 @@ fn run_dialog_thread(config: UserConfig) {
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             420,
-            420,
+            500,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             hinstance,
@@ -427,7 +465,7 @@ fn run_dialog_thread(config: UserConfig) {
         let dpi = GetDpiForWindow(hwnd).max(96) as f64;
         let scale = dpi / 96.0;
         let width = (420.0 * scale) as i32;
-        let height = (420.0 * scale) as i32;
+        let height = (500.0 * scale) as i32;
         let _ = SetWindowPos(
             hwnd,
             std::ptr::null_mut(),

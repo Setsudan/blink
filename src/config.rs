@@ -36,3 +36,5 @@ pub const FADE_OUT_SHRINK_RATIO: f64 = 0.2;
 pub const QUIET_DEFER_SECS: f64 = 30.0;
 /// Reset the work interval after this much keyboard/mouse idle time.
 pub const AFK_RESET_SECS: f64 = 3.0 * 60.0;
+/// Show a toast this many seconds before a break fires.
+pub const WARN_BEFORE_SECS: f64 = 20.0;
