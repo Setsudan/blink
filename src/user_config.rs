@@ -116,8 +116,22 @@ impl UserConfig {
 }
 
 fn config_path() -> Option<PathBuf> {
-    let appdata = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(appdata).join("Blink").join("config.json"))
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var_os("APPDATA")?;
+        Some(PathBuf::from(appdata).join("Blink").join("config.json"))
+    }
+    #[cfg(not(windows))]
+    {
+        // XDG: $XDG_CONFIG_HOME or ~/.config
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
+            })?;
+        Some(base.join("Blink").join("config.json"))
+    }
 }
 
 #[cfg(test)]

@@ -21,7 +21,32 @@ pub use windows_chrome::{
     suppress_window_chrome, MonitorBounds, PreBreakToast, SecondaryDimOverlays,
 };
 
-#[cfg(not(windows))]
+#[cfg(windows)]
+pub fn native_window_control() -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{
+    autostart_sync, cursor_monitor_bounds, force_window_bounds, force_window_bounds_physical,
+    hwnd_isize_from_frame, native_window_control, other_fullscreen_window_on_monitor,
+    seconds_since_last_input, single_instance_acquire, suppress_window_chrome, MonitorBounds,
+    PreBreakToast, SecondaryDimOverlays,
+};
+#[cfg(target_os = "linux")]
+pub mod settings_dialog {
+    pub use super::linux::settings_dialog::*;
+}
+#[cfg(target_os = "linux")]
+pub mod system_events {
+    pub use super::linux::system_events::*;
+}
+
+// Fallback stubs for other non-Windows platforms (e.g. macOS): the app builds
+// and runs, but platform-specific extras are disabled.
+#[cfg(not(any(windows, target_os = "linux")))]
 #[derive(Clone, Copy, Debug)]
 pub struct MonitorBounds {
     pub x: f32,
@@ -30,7 +55,7 @@ pub struct MonitorBounds {
     pub height: f32,
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl MonitorBounds {
     pub fn approx_eq(self, other: Self) -> bool {
         self.x == other.x
@@ -40,10 +65,15 @@ impl MonitorBounds {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn autostart_sync(_desired: bool) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn native_window_control() -> bool {
+    false
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub mod settings_dialog {
     use crate::user_config::UserConfig;
 
@@ -63,13 +93,13 @@ pub mod settings_dialog {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn suppress_window_chrome(_cc: &eframe::CreationContext<'_>) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn force_window_bounds(_frame: &eframe::Frame, _x: f32, _y: f32, _w: f32, _h: f32) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn force_window_bounds_physical(
     _frame: &eframe::Frame,
     _x: f32,
@@ -79,22 +109,22 @@ pub fn force_window_bounds_physical(
 ) {
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn cursor_monitor_bounds() -> Option<MonitorBounds> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn enumerate_monitors() -> Vec<MonitorBounds> {
     Vec::new()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn seconds_since_last_input() -> Option<f64> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn other_fullscreen_window_on_monitor(
     _monitor: MonitorBounds,
     _self_hwnd: Option<isize>,
@@ -102,15 +132,15 @@ pub fn other_fullscreen_window_on_monitor(
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn hwnd_isize_from_frame(_frame: &eframe::Frame) -> Option<isize> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct SecondaryDimOverlays;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl SecondaryDimOverlays {
     pub fn new() -> Self {
         Self
@@ -127,19 +157,19 @@ impl SecondaryDimOverlays {
     pub fn clear(&mut self) {}
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl Default for SecondaryDimOverlays {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn single_instance_acquire() -> bool {
     true
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub mod system_events {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum SystemEvent {
@@ -160,10 +190,10 @@ pub mod system_events {
     pub fn set_hotkeys_enabled(_enabled: bool) {}
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct PreBreakToast;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl PreBreakToast {
     pub fn new() -> Self {
         Self
@@ -176,7 +206,7 @@ impl PreBreakToast {
     pub fn hide(&mut self) {}
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl Default for PreBreakToast {
     fn default() -> Self {
         Self::new()

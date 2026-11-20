@@ -3,7 +3,7 @@ name = "blink"
 version = "0.1.0"
 edition = "2024"
 authors = ["Blink"]
-description = "Windows tray utility that nudges you to rest your eyes (20/20/20)."
+description = "Windows/Linux tray utility that nudges you to rest your eyes (20/20/20)."
 license = "MIT"
 
 [package.metadata.wix]
@@ -16,12 +16,13 @@ eula = false
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", default-features = false, features = ["svg"] }
 raw-window-handle = "0.6"
-rodio = { version = "0.20", default-features = false, features = ["wav"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tray-icon = "0.26"
 
+# Windows: native audio via rodio/cpal (WASAPI) and the Win32 tray backend.
 [target.'cfg(windows)'.dependencies]
+rodio = { version = "0.20", default-features = false, features = ["wav"] }
+tray-icon = "0.26"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
@@ -40,6 +41,22 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Linux: pure-Rust stack so no system dev packages are required to build.
+# - tray via the StatusNotifierItem (ksni/zbus) backend of tray-icon
+# - window/monitor/idle control over X11 via x11rb (no-op fallbacks on Wayland)
+# - logind (suspend/lock/idle) over D-Bus via zbus
+# - audio is played through pw-play/paplay/aplay at runtime (see audio.rs),
+#   so rodio/ALSA is not needed on Linux
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+x11rb = { version = "0.13", features = ["randr", "screensaver", "xinerama", "xfixes"] }
+zbus = "5"
+
+# Other unix (e.g. macOS): keep the previous behaviour.
+[target.'cfg(not(any(windows, target_os = "linux")))'.dependencies]
+rodio = { version = "0.20", default-features = false, features = ["wav"] }
+tray-icon = "0.26"
 
 [profile.dev]
 panic = "abort"

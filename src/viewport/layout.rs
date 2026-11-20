@@ -3,7 +3,8 @@ use eframe::egui;
 use crate::config::{FADE_OUT_SHRINK_RATIO, IDLE_SIZE_SLACK, IDLE_WINDOW_SIZE, RESTORE_OK_FRAMES_NEEDED};
 use crate::domain::{BreakPhase, BreakSession};
 use crate::platform::{
-    cursor_monitor_bounds, force_window_bounds, force_window_bounds_physical, MonitorBounds,
+    cursor_monitor_bounds, force_window_bounds, force_window_bounds_physical,
+    native_window_control, MonitorBounds,
 };
 
 pub struct LayoutState {
@@ -70,13 +71,20 @@ impl LayoutState {
             return;
         }
 
-        if window_is_idle_sized(ctx) {
-            self.restore_ok_frames = self.restore_ok_frames.saturating_add(1);
+        // On backends where the compositor owns window geometry (Wayland) we
+        // cannot measure the window back to idle size; trust the commands sent.
+        let restore_ok = if native_window_control() {
+            if window_is_idle_sized(ctx) {
+                self.restore_ok_frames = self.restore_ok_frames.saturating_add(1);
+            } else {
+                self.restore_ok_frames = 0;
+            }
+            self.restore_ok_frames >= RESTORE_OK_FRAMES_NEEDED
         } else {
-            self.restore_ok_frames = 0;
-        }
+            true
+        };
 
-        if self.restore_ok_frames >= RESTORE_OK_FRAMES_NEEDED {
+        if restore_ok {
             self.break_layout = false;
             self.restore_ok_frames = 0;
             self.break_monitor = None;
@@ -162,17 +170,22 @@ fn apply_break_bounds(
     ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-    // Prefer physical pixels from Win32 so mixed-DPI secondaries land correctly.
-    if let Some(phys) = physical {
-        force_window_bounds_physical(frame, phys.x, phys.y, phys.width, phys.height);
+    if native_window_control() {
+        // Prefer physical pixels from the OS so mixed-DPI secondaries land correctly.
+        if let Some(phys) = physical {
+            force_window_bounds_physical(frame, phys.x, phys.y, phys.width, phys.height);
+        } else {
+            force_window_bounds(
+                frame,
+                logical.x,
+                logical.y,
+                logical.width,
+                logical.height,
+            );
+        }
     } else {
-        force_window_bounds(
-            frame,
-            logical.x,
-            logical.y,
-            logical.width,
-            logical.height,
-        );
+        // Wayland: the compositor owns position; ask for borderless fullscreen.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
     }
 }
 
@@ -188,11 +201,16 @@ fn apply_idle_bounds(ctx: &egui::Context, frame: &eframe::Frame) {
     ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32.0, -32.0)));
-    force_window_bounds(
-        frame,
-        -32.0,
-        -32.0,
-        IDLE_WINDOW_SIZE[0],
-        IDLE_WINDOW_SIZE[1],
-    );
+    if native_window_control() {
+        force_window_bounds(
+            frame,
+            -32.0,
+            -32.0,
+            IDLE_WINDOW_SIZE[0],
+            IDLE_WINDOW_SIZE[1],
+        );
+    } else {
+        // Wayland: leave fullscreen and shrink back to the idle size.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+    }
 }

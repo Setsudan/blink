@@ -1,6 +1,11 @@
 /// Tiny invisible idle window  keeps the eframe loop alive without a visible bar.
 /// (Hiding with Visible(false) stalls viewport commands on Windows.)
+/// On Linux the width is 2 because winit's Wayland backend clamps the minimum
+/// window width to 2 (min > max of 1 would be a protocol error).
+#[cfg(windows)]
 pub const IDLE_WINDOW_SIZE: [f32; 2] = [1.0, 1.0];
+#[cfg(not(windows))]
+pub const IDLE_WINDOW_SIZE: [f32; 2] = [2.0, 1.0];
 pub const BREAK_ICON_SIZE: f32 = 72.0;
 
 pub const WORK_SECS: f64 = 20.0 * 60.0;

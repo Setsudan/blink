@@ -1,6 +1,6 @@
 # Blink
 
-A Windows tray utility that nudges you to rest your eyes. Inspired by the 20/20/20 rule: every 20 minutes, look at something far away for 20 seconds.
+A Windows **and Linux** tray utility that nudges you to rest your eyes. Inspired by the 20/20/20 rule: every 20 minutes, look at something far away for 20 seconds.
 
 Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons” area). When a break is due, a fullscreen overlay fades in with a short countdown and an optional snooze.
 
@@ -19,15 +19,17 @@ Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons�
 - Snooze up to 3 times (3 minutes each) when you need a moment
 - Quiet mode: defers the break while another app is fullscreen on that monitor
 - Wall-clock work intervals (survives sleep / lock better than frame deltas)
-- Win32 chrome suppression so the overlay stays borderless and flat
-- Settings window (tray **Settings**) for timings, sound, and launch on startup — separate Win32 dialog so the tray timer keeps running
-- Optional launch on Windows startup via `HKCU\...\Run`
-- Timings also editable in `%APPDATA%\Blink\config.json`
+- Win32 chrome suppression so the overlay stays borderless and flat (on Linux the window skips the taskbar on X11 / uses borderless fullscreen on Wayland)
+- Settings window (tray **Settings**) for timings, sound, and launch on startup — a separate Win32 dialog on Windows, a separate egui window on Linux, so the tray timer keeps running
+- Optional launch on startup: `HKCU\...\Run` on Windows, an XDG autostart entry (`~/.config/autostart/blink.desktop`) on Linux
+- Timings also editable in `%APPDATA%\Blink\config.json` (Windows) or `~/.config/Blink/config.json` (Linux)
 
 ## Requirements
 
-- Windows
+- Windows or Linux (X11 or Wayland desktop session)
 - [Rust](https://rustup.rs/) (edition 2024 toolchain)
+
+The Linux build is pure Rust — **no system dev packages are required** (the tray uses the StatusNotifierItem D-Bus protocol, window control uses x11rb, logind events use zbus). At runtime on Linux, a sound player (`pw-play`, `paplay`, `ffplay`, or `aplay`) is used for chimes if installed; without one, Blink simply stays silent.
 
 ## Build and run
 
@@ -46,6 +48,14 @@ Tests (domain break session):
 ```bash
 cargo test
 ```
+
+### Linux notes
+
+- **X11 sessions** get the full feature set: RandR monitor detection, MIT-SCREEN-SAVER idle time, fullscreen-app quiet mode, forced overlay geometry, secondary-monitor dimming, the pre-break toast, and the Ctrl+Alt+B / Ctrl+Alt+P global hotkeys (XGrabKey).
+- **Wayland sessions**: the compositor owns window placement, so the break overlay asks for borderless fullscreen instead, idle time comes from systemd-logind (`IdleHint`), and suspend/lock come from logind over D-Bus. Global hotkeys, secondary-monitor dimming and the toast are not possible for ordinary Wayland clients and are skipped (with a one-time note in the log); use your desktop environment's shortcuts for break-now/pause there.
+- Single instance uses a Unix socket at `$XDG_RUNTIME_DIR/blink.sock`.
+- Config: `~/.config/Blink/config.json` (or `$XDG_CONFIG_HOME/Blink/config.json`); logs: `~/.local/state/Blink/blink.log` (or `$XDG_STATE_HOME/...`).
+- The tray icon needs a StatusNotifierItem host (KDE Plasma, GNOME with the AppIndicator extension, etc.). Without one, Blink still runs — only the tray menu is unavailable.
 
 ### Installer (MSI)
 
@@ -91,7 +101,7 @@ During a break, the countdown overlay covers the monitor under the cursor and se
 
 ### Config file
 
-On first run Blink writes `%APPDATA%\Blink\config.json`:
+On first run Blink writes `%APPDATA%\Blink\config.json` on Windows or `~/.config/Blink/config.json` on Linux:
 
 ```json
 {
@@ -110,13 +120,13 @@ On first run Blink writes `%APPDATA%\Blink\config.json`:
 }
 ```
 
-Prefer the tray **Settings** window to change timings, sound, launch-on-startup, the pre-break warning, and global hotkeys; **Save** applies immediately (no restart). The current work countdown is left alone; new work/snooze intervals apply on the next idle schedule. The tray **Sound** checkbox still toggles `sound_enabled` and saves immediately. `launch_on_startup` registers or removes `Blink` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. `warn_before_secs` is clamped to at least 3 seconds and below the work interval.
+Prefer the tray **Settings** window to change timings, sound, launch-on-startup, the pre-break warning, and global hotkeys; **Save** applies immediately (no restart). The current work countdown is left alone; new work/snooze intervals apply on the next idle schedule. The tray **Sound** checkbox still toggles `sound_enabled` and saves immediately. On Windows, `launch_on_startup` registers or removes `Blink` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; on Linux it writes/removes `~/.config/autostart/blink.desktop`. `warn_before_secs` is clamped to at least 3 seconds and below the work interval.
 
 The tray menu also offers **Skip next break** (restarts the full work interval and resets snoozes), **Postpone 5 min**, and a **Pause for** submenu that auto-resumes after 15 minutes, 1 hour, or 4 hours.
 
 ### Logs / crashes
 
-Blink appends diagnostics to `%APPDATA%\Blink\blink.log`. Panics and unhandled Windows exceptions are written there and the process exits (so it should not linger in Task Manager).
+Blink appends diagnostics to `%APPDATA%\Blink\blink.log` on Windows or `~/.local/state/Blink/blink.log` on Linux. Panics and unhandled Windows exceptions are written there and the process exits (so it should not linger in Task Manager).
 
 ## Project layout
 
@@ -125,18 +135,26 @@ src/
   main.rs                 # eframe bootstrap
   app.rs                  # App orchestration (logic / ui wiring)
   tray.rs                 # system tray + menu actions
-  audio.rs                # optional soft.mp3 chime (rodio)
+  audio.rs                # chimes: rodio on Windows, pw-play/paplay/ffplay/aplay CLI on Linux
   config.rs               # layout/paint defaults + timing defaults
   user_config.rs          # AppData JSON load/create
   easing.rs               # shared smoothstep
   domain/
     break_session.rs      # pure break FSM (wall-clock idle; no egui)
   platform/
-    windows_chrome.rs     # DWM + monitors + quiet fullscreen + AFK + dim overlays + toast
-    autostart.rs          # HKCU Run launch-on-startup
-    settings_dialog.rs    # Win32 settings window (separate HWND)
-    single_instance.rs    # named-mutex single-instance guard
-    system_events.rs      # lock/unlock + suspend/resume + global hotkeys thread
+    mod.rs                # per-OS wiring (Windows / Linux / stubs)
+    windows_chrome.rs     # DWM + monitors + quiet fullscreen + AFK + dim overlays + toast (Windows)
+    autostart.rs          # HKCU Run launch-on-startup (Windows)
+    settings_dialog.rs    # Win32 settings window, separate HWND (Windows)
+    single_instance.rs    # named-mutex single-instance guard (Windows)
+    system_events.rs      # lock/unlock + suspend/resume + global hotkeys thread (Windows)
+    linux/
+      mod.rs              # backend detection (X11 vs Wayland) + shared state
+      chrome.rs           # x11rb: monitors/idle/quiet-mode/geometry/dim overlays/toast (+ Wayland fallbacks)
+      autostart.rs        # XDG autostart entry
+      single_instance.rs  # $XDG_RUNTIME_DIR/blink.sock guard
+      system_events.rs    # logind D-Bus signals + idle hint + X11 global hotkeys
+      settings_dialog.rs  # settings as a deferred egui viewport
   assets.rs               # SVG icon loading
   viewport/
     layout.rs             # fullscreen ↔ idle sync
@@ -153,7 +171,7 @@ assets/
 
 - **domain**  pure Rust break policy and phase machine; unit-tested without egui
 - **config** / **user_config**  compile-time defaults and persisted timings
-- **platform**  OS-specific window chrome, monitors, quiet mode, AFK, secondary dim HWNDS, autostart
+- **platform**  OS-specific window chrome, monitors, quiet mode, AFK, secondary dim overlays, autostart (Windows: Win32; Linux: x11rb + logind D-Bus, with Wayland fallbacks)
 - **viewport**  maps session state to viewport size / position / passthrough
 - **ui**  paints from an immutable session view; emits `UiAction` (e.g. snooze); settings form
 - **audio**  optional chime on break start / successful hold finish

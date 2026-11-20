@@ -1,6 +1,7 @@
 //! File logging + fatal-exit hooks.
 //!
-//! Log file: `%APPDATA%\Blink\blink.log`
+//! Log file: `%APPDATA%\Blink\blink.log` on Windows,
+//! `$XDG_STATE_HOME/Blink/blink.log` (or `~/.local/state/Blink/blink.log`) elsewhere.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -20,8 +21,22 @@ pub fn mark_dead() {
 }
 
 fn log_path() -> Option<PathBuf> {
-    let appdata = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(appdata).join("Blink").join("blink.log"))
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var_os("APPDATA")?;
+        Some(PathBuf::from(appdata).join("Blink").join("blink.log"))
+    }
+    #[cfg(not(windows))]
+    {
+        // XDG state dir: $XDG_STATE_HOME or ~/.local/state
+        let base = std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("state"))
+            })?;
+        Some(base.join("Blink").join("blink.log"))
+    }
 }
 
 pub fn init() {
