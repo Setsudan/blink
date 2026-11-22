@@ -29,6 +29,8 @@ pub struct EyeSaverApp {
     away_since: Option<SystemTime>,
     toast: PreBreakToast,
     warned_for: Option<Instant>,
+    /// Show a "break deferred" toast until this instant (quiet mode notification).
+    deferred_notify_until: Option<Instant>,
 }
 
 impl EyeSaverApp {
@@ -77,6 +79,7 @@ impl EyeSaverApp {
             away_since: None,
             toast: PreBreakToast::new(),
             warned_for: None,
+            deferred_notify_until: None,
         }
     }
 
@@ -253,6 +256,8 @@ impl EyeSaverApp {
             if other_fullscreen_window_on_monitor(monitor, self_hwnd) {
                 self.session
                     .defer_break(Duration::from_secs_f64(QUIET_DEFER_SECS));
+                logutil::log("quiet mode: break deferred (fullscreen app detected)");
+                self.deferred_notify_until = Some(Instant::now() + Duration::from_secs(5));
                 return;
             }
         }
@@ -267,6 +272,15 @@ impl EyeSaverApp {
     }
 
     fn sync_pre_break_warning(&mut self, frame: &eframe::Frame) {
+        // Quiet-mode defer notification takes priority over the pre-break warning.
+        if let Some(until) = self.deferred_notify_until {
+            if Instant::now() < until {
+                self.toast.show("Break deferred — fullscreen app in use");
+                return;
+            }
+            self.deferred_notify_until = None;
+        }
+
         let config = self.session.config();
         let due = config.warn_enabled
             && !self.session.is_active()

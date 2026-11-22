@@ -17,7 +17,10 @@ Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons�
 - Global hotkeys: **Ctrl+Alt+B** starts a break, **Ctrl+Alt+P** toggles pause (toggleable in Settings)
 - Fade in / hold / fade out; **Esc** snoozes (or finishes early if snoozes are used up)
 - Snooze up to 3 times (3 minutes each) when you need a moment
-- Quiet mode: defers the break while another app is fullscreen on that monitor
+- Quiet mode: defers the break while another app is fullscreen on that monitor, with a brief toast so you know why
+- Do-not-disturb schedule: optionally pause breaks during configured hours (e.g. 22:00–07:00)
+- Customizable overlay: background color, text color, and break message (Settings or config.json)
+- Log rotation: the log file is capped at 1 MiB (rotates to `blink.log.1`)
 - Wall-clock work intervals (survives sleep / lock better than frame deltas)
 - Win32 chrome suppression so the overlay stays borderless and flat (on Linux the window skips the taskbar on X11 / uses borderless fullscreen on Wayland)
 - Settings window (tray **Settings**) for timings, sound, and launch on startup — a separate Win32 dialog on Windows, a separate egui window on Linux, so the tray timer keeps running
@@ -116,7 +119,13 @@ On first run Blink writes `%APPDATA%\Blink\config.json` on Windows or `~/.config
   "launch_on_startup": false,
   "hotkeys_enabled": true,
   "warn_enabled": false,
-  "warn_before_secs": 20.0
+  "warn_before_secs": 20.0,
+  "overlay_bg_color": [239, 239, 239],
+  "overlay_ink_color": [70, 70, 70],
+  "break_message": "Look at something far away",
+  "dnd_enabled": false,
+  "dnd_start_hour": 22,
+  "dnd_end_hour": 7
 }
 ```
 

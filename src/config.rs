@@ -43,3 +43,9 @@ pub const QUIET_DEFER_SECS: f64 = 30.0;
 pub const AFK_RESET_SECS: f64 = 3.0 * 60.0;
 /// Show a toast this many seconds before a break fires.
 pub const WARN_BEFORE_SECS: f64 = 20.0;
+
+/// Default break overlay message.
+pub const BREAK_MESSAGE: &str = "Look at something far away";
+/// Do-not-disturb default window (22:00–07:00), disabled by default.
+pub const DND_START_HOUR: u8 = 22;
+pub const DND_END_HOUR: u8 = 7;

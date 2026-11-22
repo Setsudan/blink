@@ -26,6 +26,17 @@ pub fn native_window_control() -> bool {
     true
 }
 
+/// Current local hour (0–23) via GetLocalTime.
+#[cfg(windows)]
+pub fn local_hour() -> u8 {
+    use windows_sys::Win32::System::SystemInformation::{GetLocalTime, SYSTEMTIME};
+    unsafe {
+        let mut st = std::mem::zeroed::<SYSTEMTIME>();
+        GetLocalTime(&mut st);
+        st.wHour as u8
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -42,6 +53,39 @@ pub mod settings_dialog {
 #[cfg(target_os = "linux")]
 pub mod system_events {
     pub use super::linux::system_events::*;
+}
+
+/// Current local hour (0–23) via libc localtime_r.
+#[cfg(target_os = "linux")]
+pub fn local_hour() -> u8 {
+    #[repr(C)]
+    struct Tm {
+        tm_sec: i32,
+        tm_min: i32,
+        tm_hour: i32,
+        tm_mday: i32,
+        tm_mon: i32,
+        tm_year: i32,
+        tm_wday: i32,
+        tm_yday: i32,
+        tm_isdst: i32,
+        tm_gmtoff: i64,
+        tm_zone: *const u8,
+    }
+    unsafe extern "C" {
+        fn time(t: *mut i64) -> i64;
+        fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
+    }
+    unsafe {
+        let mut t: i64 = 0;
+        time(&mut t);
+        let mut tm = std::mem::zeroed::<Tm>();
+        if localtime_r(&t, &mut tm).is_null() {
+            // Fallback: UTC hour
+            return ((t / 3600) % 24) as u8;
+        }
+        tm.tm_hour as u8
+    }
 }
 
 // Fallback stubs for other non-Windows platforms (e.g. macOS): the app builds
@@ -71,6 +115,17 @@ pub fn autostart_sync(_desired: bool) {}
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn native_window_control() -> bool {
     false
+}
+
+/// Fallback: UTC hour.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn local_hour() -> u8 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    ((secs / 3600) % 24) as u8
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]

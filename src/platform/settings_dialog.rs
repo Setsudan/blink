@@ -51,6 +51,16 @@ const ID_STARTUP: isize = 1009;
 const ID_WARN: isize = 1010;
 const ID_WARN_LEAD: isize = 1011;
 const ID_HOTKEYS: isize = 1012;
+const ID_MSG: isize = 1013;
+const ID_BG_R: isize = 1014;
+const ID_BG_G: isize = 1015;
+const ID_BG_B: isize = 1016;
+const ID_INK_R: isize = 1017;
+const ID_INK_G: isize = 1018;
+const ID_INK_B: isize = 1019;
+const ID_DND: isize = 1020;
+const ID_DND_START: isize = 1021;
+const ID_DND_END: isize = 1022;
 const ID_SAVE: isize = 1100;
 const ID_CANCEL: isize = 1101;
 
@@ -95,6 +105,16 @@ struct DialogState {
     sound: HWND,
     hotkeys: HWND,
     startup: HWND,
+    msg: HWND,
+    bg_r: HWND,
+    bg_g: HWND,
+    bg_b: HWND,
+    ink_r: HWND,
+    ink_g: HWND,
+    ink_b: HWND,
+    dnd: HWND,
+    dnd_start: HWND,
+    dnd_end: HWND,
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -272,10 +292,52 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         24,
         ID_STARTUP,
     );
+
+    label(400, "Break message");
+    let msg = edit(400, ID_MSG, &cfg.break_message, false);
+
+    label(432, "Overlay bg RGB");
+    let bg_r = edit(432, ID_BG_R, &format!("{}", cfg.overlay_bg_color[0]), true);
+    let bg_g = edit(432, ID_BG_G, &format!("{}", cfg.overlay_bg_color[1]), true);
+    let bg_b = edit(432, ID_BG_B, &format!("{}", cfg.overlay_bg_color[2]), true);
+    // Shift G/B edits right of R
+    unsafe {
+        SetWindowPos(bg_g, std::ptr::null_mut(), 290, 430, 50, 24, SWP_NOZORDER);
+        SetWindowPos(bg_b, std::ptr::null_mut(), 345, 430, 50, 24, SWP_NOZORDER);
+    }
+
+    label(464, "Overlay text RGB");
+    let ink_r = edit(464, ID_INK_R, &format!("{}", cfg.overlay_ink_color[0]), true);
+    let ink_g = edit(464, ID_INK_G, &format!("{}", cfg.overlay_ink_color[1]), true);
+    let ink_b = edit(464, ID_INK_B, &format!("{}", cfg.overlay_ink_color[2]), true);
+    unsafe {
+        SetWindowPos(ink_g, std::ptr::null_mut(), 290, 462, 50, 24, SWP_NOZORDER);
+        SetWindowPos(ink_b, std::ptr::null_mut(), 345, 462, 50, 24, SWP_NOZORDER);
+    }
+
+    let dnd = create_child(
+        parent,
+        CTRL_BUTTON,
+        "Do not disturb (pause breaks)",
+        BS_AUTOCHECKBOX as u32 | WS_TABSTOP,
+        16,
+        496,
+        260,
+        24,
+        ID_DND,
+    );
+    label(528, "DND hours (start–end)");
+    let dnd_start = edit(528, ID_DND_START, &format!("{}", cfg.dnd_start_hour), true);
+    let dnd_end = edit(528, ID_DND_END, &format!("{}", cfg.dnd_end_hour), true);
+    unsafe {
+        SetWindowPos(dnd_end, std::ptr::null_mut(), 290, 526, 80, 24, SWP_NOZORDER);
+    }
+
     set_checked(warn, cfg.warn_enabled);
     set_checked(sound, cfg.sound_enabled);
     set_checked(hotkeys, cfg.hotkeys_enabled);
     set_checked(startup, cfg.launch_on_startup);
+    set_checked(dnd, cfg.dnd_enabled);
 
     create_child(
         parent,
@@ -283,7 +345,7 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         "Save",
         BS_DEFPUSHBUTTON as u32 | WS_TABSTOP,
         210,
-        416,
+        576,
         80,
         28,
         ID_SAVE,
@@ -294,7 +356,7 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         "Cancel",
         BS_PUSHBUTTON as u32 | WS_TABSTOP,
         300,
-        416,
+        576,
         80,
         28,
         ID_CANCEL,
@@ -313,6 +375,16 @@ fn build_controls(parent: HWND, cfg: &UserConfig) -> DialogState {
         sound,
         hotkeys,
         startup,
+        msg,
+        bg_r,
+        bg_g,
+        bg_b,
+        ink_r,
+        ink_g,
+        ink_b,
+        dnd,
+        dnd_start,
+        dnd_end,
     }
 }
 
@@ -320,6 +392,9 @@ fn read_config(state: &DialogState) -> UserConfig {
     let work_mins = parse_f64(state.work, 20.0);
     let snooze_mins = parse_f64(state.snooze, 3.0);
     let afk_mins = parse_f64(state.afk, 3.0);
+    let clamp_u8 = |hwnd: HWND, fallback: u8| -> u8 {
+        parse_u32(hwnd, fallback as u32).min(255) as u8
+    };
     UserConfig {
         work_secs: work_mins * 60.0,
         break_secs: parse_f64(state.break_secs, 20.0),
@@ -333,6 +408,27 @@ fn read_config(state: &DialogState) -> UserConfig {
         hotkeys_enabled: is_checked(state.hotkeys),
         warn_enabled: is_checked(state.warn),
         warn_before_secs: parse_f64(state.warn_lead, 20.0),
+        overlay_bg_color: [
+            clamp_u8(state.bg_r, 239),
+            clamp_u8(state.bg_g, 239),
+            clamp_u8(state.bg_b, 239),
+        ],
+        overlay_ink_color: [
+            clamp_u8(state.ink_r, 70),
+            clamp_u8(state.ink_g, 70),
+            clamp_u8(state.ink_b, 70),
+        ],
+        break_message: {
+            let m = get_text(state.msg);
+            if m.trim().is_empty() {
+                crate::config::BREAK_MESSAGE.to_owned()
+            } else {
+                m
+            }
+        },
+        dnd_enabled: is_checked(state.dnd),
+        dnd_start_hour: (parse_u32(state.dnd_start, 22).min(23)) as u8,
+        dnd_end_hour: (parse_u32(state.dnd_end, 7).min(23)) as u8,
     }
     .sanitized()
 }
@@ -443,7 +539,7 @@ fn run_dialog_thread(config: UserConfig) {
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             420,
-            500,
+            660,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             hinstance,
@@ -465,7 +561,7 @@ fn run_dialog_thread(config: UserConfig) {
         let dpi = GetDpiForWindow(hwnd).max(96) as f64;
         let scale = dpi / 96.0;
         let width = (420.0 * scale) as i32;
-        let height = (500.0 * scale) as i32;
+        let height = (660.0 * scale) as i32;
         let _ = SetWindowPos(
             hwnd,
             std::ptr::null_mut(),

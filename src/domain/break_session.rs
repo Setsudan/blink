@@ -186,10 +186,11 @@ impl BreakSession {
         self.next_break_at = Instant::now() + duration_secs(self.config.work_secs);
     }
 
-    /// True when idle, not paused, and the break is within `lead_secs`.
+    /// True when idle, not paused, not in DND, and the break is within `lead_secs`.
     pub fn warning_due(&self, lead_secs: f64) -> bool {
         self.phase == BreakPhase::Idle
             && self.paused_remaining.is_none()
+            && !self.in_dnd_window()
             && self.secs_until_break() <= lead_secs
     }
 
@@ -234,11 +235,31 @@ impl BreakSession {
         }
     }
 
-    /// True when idle, not paused, and the wall-clock break is due.
+    /// True when idle, not paused, not in DND hours, and the wall-clock break is due.
     pub fn break_is_due(&self) -> bool {
         self.phase == BreakPhase::Idle
             && self.paused_remaining.is_none()
+            && !self.in_dnd_window()
             && Instant::now() >= self.next_break_at
+    }
+
+    /// True when the current local hour falls inside the do-not-disturb window.
+    /// Handles overnight windows (e.g. 22:00–07:00) where start > end.
+    pub fn in_dnd_window(&self) -> bool {
+        if !self.config.dnd_enabled {
+            return false;
+        }
+        let hour = local_hour();
+        let start = self.config.dnd_start_hour;
+        let end = self.config.dnd_end_hour;
+        if start == end {
+            return false;
+        }
+        if start < end {
+            hour >= start && hour < end
+        } else {
+            hour >= start || hour < end
+        }
     }
 
     pub fn begin_due_break(&mut self) -> Option<BreakEvent> {
@@ -329,6 +350,11 @@ impl BreakSession {
 
 fn duration_secs(secs: f64) -> Duration {
     Duration::from_secs_f64(secs.max(0.0))
+}
+
+/// Current local hour (0–23). Uses OS APIs; UTC fallback if unavailable.
+fn local_hour() -> u8 {
+    crate::platform::local_hour()
 }
 
 #[cfg(test)]
@@ -662,5 +688,75 @@ mod tests {
         s.snoozes_used = 1;
         assert_eq!(s.advance(0.01), None);
         assert_eq!(s.phase(), BreakPhase::Idle);
+    }
+
+    #[test]
+    fn dnd_disabled_never_blocks() {
+        let mut s = session();
+        s.config.dnd_enabled = false;
+        s.config.dnd_start_hour = 0;
+        s.config.dnd_end_hour = 23;
+        assert!(!s.in_dnd_window());
+    }
+
+    #[test]
+    fn dnd_same_hour_never_blocks() {
+        let mut s = session();
+        s.config.dnd_enabled = true;
+        s.config.dnd_start_hour = 12;
+        s.config.dnd_end_hour = 12;
+        assert!(!s.in_dnd_window());
+    }
+
+    #[test]
+    fn dnd_window_logic_daytime() {
+        // Window 9–17 (same-day, start < end)
+        let mut s = session();
+        s.config.dnd_enabled = true;
+        s.config.dnd_start_hour = 9;
+        s.config.dnd_end_hour = 17;
+        let hour = crate::platform::local_hour();
+        let expected = hour >= 9 && hour < 17;
+        assert_eq!(s.in_dnd_window(), expected);
+    }
+
+    #[test]
+    fn dnd_window_logic_overnight() {
+        // Window 22–7 (overnight, start > end)
+        let mut s = session();
+        s.config.dnd_enabled = true;
+        s.config.dnd_start_hour = 22;
+        s.config.dnd_end_hour = 7;
+        let hour = crate::platform::local_hour();
+        let expected = hour >= 22 || hour < 7;
+        assert_eq!(s.in_dnd_window(), expected);
+    }
+
+    #[test]
+    fn break_is_due_blocked_during_dnd() {
+        let mut s = session();
+        s.config.dnd_enabled = true;
+        // Set DND to cover all 24 hours except one, pick the hour NOT in DND
+        let hour = crate::platform::local_hour();
+        // start=0, end=23 blocks hours 0..22; hour 23 is free
+        if hour != 23 {
+            s.config.dnd_start_hour = 0;
+            s.config.dnd_end_hour = 23;
+            s.next_break_at = Instant::now() - Duration::from_millis(1);
+            assert!(!s.break_is_due(), "should be blocked during DND at hour {hour}");
+        }
+    }
+
+    #[test]
+    fn warning_due_blocked_during_dnd() {
+        let mut s = session();
+        s.config.dnd_enabled = true;
+        let hour = crate::platform::local_hour();
+        if hour != 23 {
+            s.config.dnd_start_hour = 0;
+            s.config.dnd_end_hour = 23;
+            s.next_break_at = Instant::now() + Duration::from_secs(5);
+            assert!(!s.warning_due(60.0), "warning should be blocked during DND at hour {hour}");
+        }
     }
 }

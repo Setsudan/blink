@@ -12,6 +12,9 @@ use std::sync::Mutex;
 static ALIVE: AtomicBool = AtomicBool::new(true);
 static LOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Max log file size before rotation (1 MiB).
+const MAX_LOG_BYTES: u64 = 1024 * 1024;
+
 pub fn alive() -> bool {
     ALIVE.load(Ordering::SeqCst)
 }
@@ -87,9 +90,26 @@ pub fn log(msg: &str) {
     let Some(path) = path else {
         return;
     };
+    rotate_if_needed(&path);
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
         let _ = file.flush();
+    }
+}
+
+/// If the log file exceeds MAX_LOG_BYTES, rename it to `.log.1` (replacing any
+/// previous rotation) so the file never grows unbounded.
+fn rotate_if_needed(path: &PathBuf) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    if meta.len() < MAX_LOG_BYTES {
+        return;
+    }
+    let rotated = path.with_extension("log.1");
+    let _ = std::fs::remove_file(&rotated);
+    if let Err(err) = std::fs::rename(path, &rotated) {
+        eprintln!("blink: log rotation failed: {err}");
     }
 }
 

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    AFK_RESET_SECS, BREAK_SECS, FADE_IN_SECS, FADE_OUT_SECS, MAX_SNOOZES, SNOOZE_SECS,
-    WARN_BEFORE_SECS, WORK_SECS,
+    AFK_RESET_SECS, BREAK_FILL, BREAK_MESSAGE, BREAK_SECS, DND_END_HOUR, DND_START_HOUR,
+    FADE_IN_SECS, FADE_OUT_SECS, INK_RGB, MAX_SNOOZES, SNOOZE_SECS, WARN_BEFORE_SECS, WORK_SECS,
 };
 
 fn default_true() -> bool {
@@ -18,6 +18,26 @@ fn default_afk_reset_secs() -> f64 {
 
 fn default_warn_before_secs() -> f64 {
     WARN_BEFORE_SECS
+}
+
+fn default_overlay_bg() -> [u8; 3] {
+    BREAK_FILL
+}
+
+fn default_overlay_ink() -> [u8; 3] {
+    INK_RGB
+}
+
+fn default_break_message() -> String {
+    BREAK_MESSAGE.to_owned()
+}
+
+fn default_dnd_start() -> u8 {
+    DND_START_HOUR
+}
+
+fn default_dnd_end() -> u8 {
+    DND_END_HOUR
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -40,6 +60,18 @@ pub struct UserConfig {
     pub warn_enabled: bool,
     #[serde(default = "default_warn_before_secs")]
     pub warn_before_secs: f64,
+    #[serde(default = "default_overlay_bg")]
+    pub overlay_bg_color: [u8; 3],
+    #[serde(default = "default_overlay_ink")]
+    pub overlay_ink_color: [u8; 3],
+    #[serde(default = "default_break_message")]
+    pub break_message: String,
+    #[serde(default)]
+    pub dnd_enabled: bool,
+    #[serde(default = "default_dnd_start")]
+    pub dnd_start_hour: u8,
+    #[serde(default = "default_dnd_end")]
+    pub dnd_end_hour: u8,
 }
 
 impl Default for UserConfig {
@@ -57,6 +89,12 @@ impl Default for UserConfig {
             hotkeys_enabled: true,
             warn_enabled: false,
             warn_before_secs: WARN_BEFORE_SECS,
+            overlay_bg_color: BREAK_FILL,
+            overlay_ink_color: INK_RGB,
+            break_message: BREAK_MESSAGE.to_owned(),
+            dnd_enabled: false,
+            dnd_start_hour: DND_START_HOUR,
+            dnd_end_hour: DND_END_HOUR,
         }
     }
 }
@@ -102,6 +140,11 @@ impl UserConfig {
         self.fade_out_secs = self.fade_out_secs.max(0.05);
         self.afk_reset_secs = self.afk_reset_secs.max(1.0);
         self.warn_before_secs = self.warn_before_secs.clamp(3.0, (self.work_secs - 1.0).max(3.0));
+        self.dnd_start_hour = self.dnd_start_hour.min(23);
+        self.dnd_end_hour = self.dnd_end_hour.min(23);
+        if self.break_message.trim().is_empty() {
+            self.break_message = BREAK_MESSAGE.to_owned();
+        }
         self
     }
 
@@ -144,6 +187,12 @@ mod tests {
         assert!(cfg.hotkeys_enabled);
         assert!(!cfg.warn_enabled);
         assert_eq!(cfg.warn_before_secs, WARN_BEFORE_SECS);
+        assert!(!cfg.dnd_enabled);
+        assert_eq!(cfg.dnd_start_hour, crate::config::DND_START_HOUR);
+        assert_eq!(cfg.dnd_end_hour, crate::config::DND_END_HOUR);
+        assert_eq!(cfg.overlay_bg_color, crate::config::BREAK_FILL);
+        assert_eq!(cfg.overlay_ink_color, crate::config::INK_RGB);
+        assert_eq!(cfg.break_message, crate::config::BREAK_MESSAGE);
 
         // Old config files without the new keys still deserialize.
         let json = r#"{"work_secs":1200.0,"break_secs":20.0,"snooze_secs":180.0,
@@ -152,6 +201,9 @@ mod tests {
         assert!(cfg.hotkeys_enabled);
         assert!(!cfg.warn_enabled);
         assert_eq!(cfg.warn_before_secs, WARN_BEFORE_SECS);
+        assert!(!cfg.dnd_enabled);
+        assert_eq!(cfg.overlay_bg_color, crate::config::BREAK_FILL);
+        assert_eq!(cfg.break_message, crate::config::BREAK_MESSAGE);
     }
 
     #[test]
@@ -170,5 +222,17 @@ mod tests {
         cfg.warn_before_secs = 50.0;
         // work_secs floor is 1.0; lead clamps to its own 3.0 minimum.
         assert_eq!(cfg.sanitized().warn_before_secs, 3.0);
+    }
+
+    #[test]
+    fn sanitize_clamps_dnd_hours_and_message() {
+        let mut cfg = UserConfig::default();
+        cfg.dnd_start_hour = 25;
+        cfg.dnd_end_hour = 99;
+        cfg.break_message = "   ".to_owned();
+        let s = cfg.sanitized();
+        assert_eq!(s.dnd_start_hour, 23);
+        assert_eq!(s.dnd_end_hour, 23);
+        assert_eq!(s.break_message, crate::config::BREAK_MESSAGE);
     }
 }
