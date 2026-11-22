@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::config::{
-    BREAK_FILL, BREAK_ICON_SIZE, EYE_OFFSET_Y, INK_RGB, LABEL_FONT_SIZE, LABEL_OFFSET_Y,
+    BREAK_ICON_SIZE, EYE_OFFSET_Y, LABEL_FONT_SIZE, LABEL_OFFSET_Y,
     SNOOZE_BTN_OFFSET_Y, SNOOZE_BTN_RADIUS, SNOOZE_BTN_SIZE, SNOOZE_FONT_SIZE, SNOOZE_RED,
     SNOOZE_RED_HOVER, SNOOZE_VISIBLE_ALPHA,
 };
@@ -24,7 +24,8 @@ pub fn paint_break_overlay(
     }
 
     let rect = ui.max_rect();
-    let [r, g, b] = BREAK_FILL;
+    let cfg = session.config();
+    let [r, g, b] = cfg.overlay_bg_color;
     ui.painter().rect_filled(
         rect,
         0.0,
@@ -32,7 +33,7 @@ pub fn paint_break_overlay(
     );
 
     let content_alpha = (alpha * 255.0) as u8;
-    let [ir, ig, ib] = INK_RGB;
+    let [ir, ig, ib] = cfg.overlay_ink_color;
     let ink = egui::Color32::from_rgba_unmultiplied(ir, ig, ib, content_alpha);
     let center = rect.center();
 
@@ -86,10 +87,11 @@ pub fn paint_break_overlay(
 
     let remaining = session.hold_remaining().ceil() as i32;
     let break_secs = session.config().break_secs.ceil() as i32;
+    let msg = &session.config().break_message;
     let label = if session.phase() == BreakPhase::Hold {
-        format!("Look at something far away for {remaining}s")
+        format!("{msg} for {remaining}s")
     } else {
-        format!("Look at something far away for {break_secs} seconds")
+        format!("{msg} for {break_secs} seconds")
     };
 
     ui.painter().text(

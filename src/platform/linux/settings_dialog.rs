@@ -61,8 +61,8 @@ pub fn open(config: &UserConfig) {
     };
     let builder = egui::ViewportBuilder::default()
         .with_title("Blink Settings")
-        .with_inner_size([380.0, 600.0])
-        .with_min_inner_size([320.0, 420.0]);
+        .with_inner_size([400.0, 720.0])
+        .with_min_inner_size([340.0, 520.0]);
     ctx.show_viewport_deferred(viewport_id(), builder, move |ui, _class| {
         render(ui, &state);
     });
@@ -98,6 +98,15 @@ pub fn take_result() -> Option<SettingsDialogResult> {
         close_viewport();
     }
     result
+}
+
+/// Small RGB color picker: three DragValues for R, G, B channels.
+fn color_edit(ui: &mut egui::Ui, color: &mut [u8; 3]) {
+    ui.horizontal(|ui| {
+        ui.add(egui::DragValue::new(&mut color[0]).range(0..=255).prefix("R"));
+        ui.add(egui::DragValue::new(&mut color[1]).range(0..=255).prefix("G"));
+        ui.add(egui::DragValue::new(&mut color[2]).range(0..=255).prefix("B"));
+    });
 }
 
 fn render(ui: &mut egui::Ui, state: &Arc<Mutex<DialogState>>) {
@@ -197,6 +206,32 @@ fn render(ui: &mut egui::Ui, state: &Arc<Mutex<DialogState>>) {
                 ui.label("Hotkeys");
                 ui.checkbox(&mut draft.hotkeys_enabled, "Ctrl+Alt+B / Ctrl+Alt+P");
                 ui.end_row();
+
+                ui.label("Break message");
+                ui.add(egui::TextEdit::singleline(&mut draft.break_message).desired_width(160.0));
+                ui.end_row();
+
+                ui.label("Overlay bg");
+                color_edit(ui, &mut draft.overlay_bg_color);
+                ui.end_row();
+
+                ui.label("Overlay text");
+                color_edit(ui, &mut draft.overlay_ink_color);
+                ui.end_row();
+
+                ui.label("Do not disturb");
+                ui.checkbox(&mut draft.dnd_enabled, "enabled");
+                ui.end_row();
+
+                if draft.dnd_enabled {
+                    ui.label("  DND hours");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut draft.dnd_start_hour).range(0..=23).suffix("h"));
+                        ui.label("to");
+                        ui.add(egui::DragValue::new(&mut draft.dnd_end_hour).range(0..=23).suffix("h"));
+                    });
+                    ui.end_row();
+                }
                 });
             });
     }
