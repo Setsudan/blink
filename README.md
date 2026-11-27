@@ -4,6 +4,8 @@ A Windows **and Linux** tray utility that nudges you to rest your eyes. Inspired
 
 Blink runs quietly in the system tray (or the Win11 overflow / “hidden icons” area). When a break is due, a fullscreen overlay fades in with a short countdown and an optional snooze.
 
+Watch a short [demo video](demo.mp4) (rendered by [`scripts/make_demo_video.py`](scripts/make_demo_video.py)).
+
 ## Features
 
 - No always-visible window between breaks
